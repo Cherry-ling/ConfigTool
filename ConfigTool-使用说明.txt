@@ -1,0 +1,311 @@
+PairPair ConfigTool 使用说明
+
+一、它是什么软件
+
+PairPair ConfigTool 是一个独立的 macOS 本地配置表查看与编辑工具。
+
+它直接读取电脑上的 Excel（.xlsx）和生成后的 Lua（.lua）配置文件：
+
+1. 不启动 HTTP 服务，不参与 Unity 的导表流程。
+2. 不会上传或同步配置到服务器。
+3. 默认只读浏览；只有点击“编辑”并“保存”后，才会改写所选目录里的源文件。
+
+它适合在不打开 Unity 的情况下查看配置、搜索字段值、跟踪 ID 关联，或谨慎地改少量配置。
+
+重要：
+工具独立于 Unity，不代表保存后不会影响项目。若选择了项目的 configExcel 目录并保存，改动的就是项目配置源文件。
+
+当前 App 要求 macOS 13 及以上；现有构建是 Apple Silicon（arm64）。Windows 无法直接运行这个 .app，但本说明文件可在 Windows 和 macOS 上打开。
+
+
+二、快速开始
+
+1. 双击 PairPair ConfigTool.app。
+2. 首次使用，或原目录失效时，在右上角“目录预设”中选择“选择其他目录…”。
+3. 选择一个包含 .xlsx 或 .lua 配置文件的文件夹。
+4. 在左侧选择配置表；Excel 的每个 Sheet 会作为一个可浏览的配置页。
+5. 默认只读。需要改动时，点击“编辑”，确认修改后再点击“保存”。
+
+“目录预设”可以保存常用目录、调整排序、改名称并设置启动默认目录。预设与上次使用目录只保存在本机，不会写回项目，也不会影响其他人的电脑。
+
+
+三、主要功能
+
+1. 配置浏览
+
+浏览当前目录第一层的 .xlsx 和 .lua 文件。Excel 的每个 Sheet 都可单独浏览；不递归扫描子目录。
+
+2. 表名筛选
+
+按 Command + K（Windows 键盘可尝试 Ctrl + K）可在左侧按配置表名筛选。
+
+3. 当前表搜索
+
+按 Command + F，顶部选择“当前”。工具会高亮当前 Sheet 内匹配的单元格。
+
+回车：下一条结果。
+Shift + 回车：上一条结果。
+
+4. 全局搜索
+
+按 Command + F，顶部选择“全局”。工具会扫描当前目录所有已识别配置表，按表分组显示结果；点击结果可以跳到具体单元格。
+
+界面最多显示 500 条结果，但会显示实际总命中数。
+
+5. 正向跳转
+
+按住 Command 或 Ctrl，单击已识别关联的单元格，可从引用字段跳到目标表对应的 ID 或 SubID 行。
+
+6. 反向引用
+
+按住 Option 或 Alt，单击数据区的 ID 或 SubID，可查看当前目录中哪些已识别字段引用它。结果会按来源表分组；点击可跳到实际引用单元格。
+
+7. 跳转历史
+
+Command + [：返回关联跳转前的位置。
+Command + ]：前进到下一处关联位置。
+
+8. 自动刷新
+
+工具会监听目录中的文件写入、重命名、删除等变化并刷新。若没有及时更新，可按 Command + R 强制刷新。
+
+9. 编辑保存
+
+点击“编辑”后可修改单元格；有修改时保存按钮才可用。保存前会检查源文件是否被外部更新，避免直接覆盖较新的内容。
+
+
+四、支持的目录和表结构
+
+1. 扫描范围
+
+只读取所选目录的第一层普通文件。
+支持 .xlsx 和 .lua。
+忽略隐藏文件和 Excel 临时锁文件（文件名以 ~$ 开头）。
+Excel 会读取所有 Sheet。
+
+Lua 需要是工具能识别的生成格式：包含 local tmp，并返回对应的 Lua table。非标准 Lua 会在列表中显示读取异常。
+
+2. 推荐表结构
+
+工具按 PairPair 现有习惯理解表格：
+
+第 1 行：说明。
+第 2 行：字段名。
+第 3 行：字段类型。
+第 4 行起：数据。
+
+关联、反向引用和全局搜索都以第 2 行字段名和第 4 行起的数据为基础。
+
+Excel 进入编辑模式后虽然可修改表头，但通常不建议这样做。
+
+
+五、关联规则是怎样的
+
+关联分为“显式规则”和“命名自动推断”两层。目录中的表被重新扫描后，会依据当前所有表重新计算关系；不需要逐张表手动点击建立关系。
+
+（一）正向跳转
+
+在数据单元格上按住 Command 或 Ctrl 点击，工具按以下顺序找目标：
+
+1. 显式规则优先
+
+内置规则已识别：
+
+PhaseReward、PhaseRewardID
+目标表：PhaseReward
+目标字段：ID
+
+PaymentID、PaymentId
+目标表：Payment
+目标字段：ID
+
+RankReward、RankRewardID、RankRewardId
+目标表：RankReward
+目标字段：ID
+
+ShopID、ShopId
+目标表：Shop
+目标字段：ID
+
+TargetItem、TargetItemID、TargetItemId、ItemID、ItemId、itemId
+目标表：Item、ItemCfg、item@design
+目标字段：ID
+
+LevelID、LevelId、UnlockLevelID、UnlockLevelId
+目标表：Level、level@design
+目标字段：ID
+
+ProfileID、ProfileId
+目标表：Profile、ProfileCfg
+目标字段：ID
+
+BotID、BotId
+目标表：Bot
+目标字段：ID
+
+Reward、FreeReward、PayerReward、BattlePassFreeReward、ExReward1、RewardTargetItem、CollectItemCount
+目标表：Item、ItemCfg、item@design
+目标字段：从奖励 JSON 的 key 中提取 ID
+
+2. 按字段名自动推断
+
+如果字段形如下面这些形式，工具会推断目标表：
+
+FooID
+FooId
+FooConfigID
+FooCfgID
+foo_id
+
+例如，Shop.xlsx 中的 ItemID 会被推断为引用 Item.xlsx 的 ID。
+
+3. 表名归一化匹配
+
+比较表名时不区分大小写；会忽略扩展名、@ 后缀，以及末尾的 Config、Cfg、Table、Design、Column、Server 等词。
+
+例如下面的名称可以作为 Item 类表候选：
+
+Item
+ItemCfg
+item@design
+
+4. 特殊关系
+
+父子表：表名存在前缀层级时，可从 ID 或 SubID 推断上级表。
+
+Activity：可通过 Activity 行中的 Name 加 SubID 查找对应活动子表。
+
+奖励 JSON：仅提取类似 {"101": 3} 中冒号左侧的 key，作为物品 ID。
+
+目标表通常必须有 ID 列；部分关系可使用 SubID。数字字符串会按数值比较，因此 001 与 1 在关联时会视为同一个值。
+
+若多个表都符合，会显示候选菜单让用户选择。
+
+（二）反向引用
+
+在数据区的 ID 或 SubID 上按住 Option 或 Alt 点击，工具会扫描当前目录的全部配置缓存，查找：
+
+1. 上述显式规则中的普通字段引用。
+2. 奖励 JSON key 中的引用。
+3. 通过 FooID 等命名规则推断出的引用。
+4. 父子表与 Activity 的特殊引用。
+
+它不是对所有数字做全文反查。因此，无规则、无命名约定的数字字段不会被误认为关联。
+
+
+六、新目录如何自动关联
+
+将新目录选为当前目录后，工具会自动扫描其中的表并尝试建立关联。
+
+最容易自动关联的表结构如下：
+
+Item.xlsx
+第 2 行字段：ID，Name，……
+
+Shop.xlsx
+第 2 行字段：ID，ItemID，Price，……
+
+在这个例子中，Shop.ItemID 的值可以自动跳到 Item.ID。
+
+新目录新增、删除或改名表格后：
+
+1. 工具通常会自动刷新。
+2. 刷新后新增表会立即参与正向跳转和反向引用。
+3. 若没有立即生效，按 Command + R。
+4. 切换目录也会强制刷新。
+
+不能自动关联的常见原因：
+
+1. 表放在子目录中。
+2. 字段名不含 ID 语义，例如 PrizeGroup 实际引用 RewardBundle。
+3. 目标表没有 ID 或 SubID 标识列。
+4. 字段名不在第 2 行，或者数据不从第 4 行开始。
+5. 奖励数据不是以 JSON 对象 key 表示 ID。
+6. 表名和字段名没有可推断的对应关系。
+
+
+七、没有自动关联时，如何手动关联
+
+当前 App 没有“按目录在界面里保存自定义关联”的功能。
+
+手动关联需要维护全局规则文件：
+
+/Users/lingkunwang/Desktop/Tool/PairPair_Tool/ConfigTool/Resources/relationships.js
+
+例如：字段 CostPackage 实际引用 PricePackage.xlsx 的 ID。可以增加如下规则：
+
+{
+  fields: ["CostPackage", "CostPackageID"],
+  targets: ["PricePackage", "PricePackageCfg"],
+  targetKey: "ID",
+  mode: "scalar",
+  label: "价格包"
+},
+
+规则字段含义：
+
+fields
+来源表中需要识别的字段名，可写多个别名；不区分大小写。
+
+targets
+目标表候选名，可写文件名、Sheet 名或别名。
+
+targetKey
+目标表的匹配列。通常写 ID；若主键是子 ID，可写 SubID。
+
+mode
+普通单值关系写 scalar。
+从 JSON object 的 key 读取 ID 写 jsonKeys。
+
+label
+界面展示的关系名称。
+
+修改规则后的生效步骤：
+
+1. 在 window.CONFIG_RELATION_RULES = [ ... ] 内增加规则，并确保每个对象之间保留逗号。
+2. 进入工具目录。
+3. 执行：node --check Resources/relationships.js
+4. 执行：./build.sh
+5. 重新打开新生成的 App，选择目标目录，验证正向跳转和反向引用。
+
+注意：仅修改 Resources/relationships.js 不会立即影响已经构建好的 App。构建时才会把该规则文件复制进 App 包内。
+
+
+八、如何让 AI 协助关联
+
+ConfigTool 当前没有内置 AI 自动调用功能。
+
+AI 的合理角色是“读取表结构，生成候选规则”，最终规则仍应由人确认后写入 relationships.js。
+
+建议流程：
+
+1. 将新目录交给 AI，只允许读取。
+2. 让 AI 列出每张表的文件名、Sheet 名、第 2 行字段名、主键候选和少量样本。
+3. 让 AI 输出两组结果：
+   - 高置信度规则：字段名、目标表名和 ID 样本均一致。
+   - 待确认规则：只有数值重合或业务名称不明确。
+4. 人工核对业务含义，并抽样核对引用 ID。
+5. 将确认后的规则写入 relationships.js。
+6. 重新构建 App，用正向跳转和反查验证。
+
+可把以下提示词发给 AI：
+
+请只读分析目录 <配置目录绝对路径> 中第一层的 xlsx/lua 配置。
+对每张表提取：文件名、Sheet 名、第 2 行字段名、第 4 行起的主键候选和少量样本。
+推断跨表引用，并分为：
+1. 高置信度：字段名、目标表名和 ID 样本均一致。
+2. 待确认：只有数值重合或业务名称不明确。
+请为高置信度规则输出可直接加入 Resources/relationships.js 的对象：
+{ fields, targets, targetKey, mode, label }
+不要修改任何文件；对每条规则说明来源表、目标表、字段、匹配样本和推断原因。
+
+AI 不应仅凭“两个字段里都有相同数字”建立关系。尤其活动 ID、奖励 ID、关卡 ID、货币数量等可能碰巧重合，必须有字段名、表名或业务语义的证据。
+
+
+九、保存注意事项
+
+1. 保存会直接覆盖原文件。修改前建议使用 Git、Finder 副本或其他方式备份。
+2. 保存前若文件被外部程序修改，工具会要求刷新后重新编辑，避免覆盖较新的内容。
+3. Lua 生成配置可能在下次导表时被覆盖。
+4. Excel 公式不适合用本工具维护。写入以等号开头的内容时，工具会写入公式本身，但不会写入计算缓存；重新打开前可能显示为空，直到 Excel 等软件完成重算。
+5. 出现关联异常时，先确认目录、表名、字段名、目标 ID 列和数据起始行，再考虑增加显式规则。

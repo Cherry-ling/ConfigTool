@@ -1,0 +1,8 @@
+# macOS metadata
+.DS_Store
+
+# Local browser automation artifacts
+.playwright-cli/
+
+# Rebuildable application bundle
+PairPair ConfigTool.app/
