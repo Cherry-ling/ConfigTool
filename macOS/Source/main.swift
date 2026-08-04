@@ -798,6 +798,7 @@ private final class AppController: NSObject, NSApplicationDelegate, WKScriptMess
     private var webView: WKWebView!
     private let loader = DirectoryLoader()
     private let saver = ConfigFileSaver()
+    private let gitRepository = GitRepositoryService()
     private let monitor = DirectoryMonitor()
     private let loaderQueue = DispatchQueue(label: "com.pairpair.configtool.loader", qos: .userInitiated)
     private var currentDirectory: URL
@@ -812,6 +813,7 @@ private final class AppController: NSObject, NSApplicationDelegate, WKScriptMess
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        configureMainMenu()
         let configuration = WKWebViewConfiguration()
         configuration.userContentController.add(self, name: "configTool")
         webView = WKWebView(frame: .zero, configuration: configuration)
@@ -855,8 +857,48 @@ private final class AppController: NSObject, NSApplicationDelegate, WKScriptMess
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private func configureMainMenu() {
+        let mainMenu = NSMenu()
+
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "退出 ConfigTool", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        let editMenuItem = NSMenuItem(title: "编辑", action: nil, keyEquivalent: "")
+        let editMenu = NSMenu(title: "编辑")
+        addEditCommand(to: editMenu, title: "全选", action: "selectAll:", key: "a", modifiers: [.command])
+        addEditCommand(to: editMenu, title: "剪切", action: "cut:", key: "x", modifiers: [.command])
+        addEditCommand(to: editMenu, title: "拷贝", action: "copy:", key: "c", modifiers: [.command])
+        addEditCommand(to: editMenu, title: "粘贴", action: "paste:", key: "v", modifiers: [.command])
+        editMenu.addItem(.separator())
+        addEditCommand(to: editMenu, title: "全选（Ctrl+A）", action: "selectAll:", key: "a", modifiers: [.control])
+        addEditCommand(to: editMenu, title: "剪切（Ctrl+X）", action: "cut:", key: "x", modifiers: [.control])
+        addEditCommand(to: editMenu, title: "拷贝（Ctrl+C）", action: "copy:", key: "c", modifiers: [.control])
+        addEditCommand(to: editMenu, title: "粘贴（Ctrl+V）", action: "paste:", key: "v", modifiers: [.control])
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
+        NSApp.mainMenu = mainMenu
+    }
+
+    private func addEditCommand(
+        to menu: NSMenu,
+        title: String,
+        action: String,
+        key: String,
+        modifiers: NSEvent.ModifierFlags
+    ) {
+        let item = NSMenuItem(title: title, action: Selector(action), keyEquivalent: key)
+        item.keyEquivalentModifierMask = modifiers
+        item.target = nil
+        menu.addItem(item)
+    }
+
     func applicationDidBecomeActive(_ notification: Notification) {
         refreshIfChanged()
+        refreshGitStatus()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -891,6 +933,10 @@ private final class AppController: NSObject, NSApplicationDelegate, WKScriptMess
             if let path = body["path"] as? String { switchDirectory(path: path) }
         case "revealDirectory":
             NSWorkspace.shared.activateFileViewerSelecting([currentDirectory])
+        case "readClipboard":
+            readClipboard(requestId: body["requestId"] as? Int ?? -1)
+        case "writeClipboard":
+            writeClipboard(text: body["text"] as? String ?? "")
         case "save":
             save(body: body)
         case "loadWorkbook":
@@ -899,6 +945,17 @@ private final class AppController: NSObject, NSApplicationDelegate, WKScriptMess
             findReverseReferences(body: body)
         case "findGlobalMatches":
             findGlobalMatches(body: body)
+        case "refreshGitStatus":
+            refreshGitStatus()
+        case "pullGit":
+            pullGit()
+        case "previewGitClean":
+            previewGitClean()
+        case "cleanGitChanges":
+            cleanGitChanges(
+                trackedPaths: body["trackedPaths"] as? [String] ?? [],
+                untrackedPaths: body["untrackedPaths"] as? [String] ?? []
+            )
         default:
             break
         }
@@ -918,6 +975,17 @@ private final class AppController: NSObject, NSApplicationDelegate, WKScriptMess
             UserDefaults.standard.set(url.path, forKey: "ConfigDirectory")
             self?.refresh(force: true)
         }
+    }
+
+    private func readClipboard(requestId: Int) {
+        let text = NSPasteboard.general.string(forType: .string) ?? ""
+        sendJavaScript(function: "receiveClipboardText", object: ["requestId": requestId, "text": text])
+    }
+
+    private func writeClipboard(text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
     }
 
     private func switchDirectory(path: String) {
@@ -1084,6 +1152,71 @@ private final class AppController: NSObject, NSApplicationDelegate, WKScriptMess
         }
     }
 
+    private func refreshGitStatus() {
+        let directory = currentDirectory
+        loaderQueue.async { [weak self] in
+            guard let self else { return }
+            let status = self.gitRepository.inspect(directory: directory)
+            DispatchQueue.main.async {
+                guard directory == self.currentDirectory else { return }
+                self.sendCodableJavaScript(function: "receiveGitStatus", value: status)
+            }
+        }
+    }
+
+    private func pullGit() {
+        let directory = currentDirectory
+        sendJavaScript(function: "setGitOperation", object: ["operation": "pull", "running": true])
+        loaderQueue.async { [weak self] in
+            guard let self else { return }
+            let result = self.gitRepository.pull(directory: directory)
+            DispatchQueue.main.async {
+                guard directory == self.currentDirectory else { return }
+                self.sendCodableJavaScript(
+                    function: "receiveGitOperation",
+                    value: GitOperationResponse(operation: "pull", success: result.success, message: result.message, status: result.status)
+                )
+                if result.success {
+                    self.currentSignature = ""
+                    self.refresh(force: true)
+                }
+            }
+        }
+    }
+
+    private func previewGitClean() {
+        let directory = currentDirectory
+        sendJavaScript(function: "setGitOperation", object: ["operation": "previewClean", "running": true])
+        loaderQueue.async { [weak self] in
+            guard let self else { return }
+            let preview = self.gitRepository.previewClean(directory: directory)
+            DispatchQueue.main.async {
+                guard directory == self.currentDirectory else { return }
+                self.sendCodableJavaScript(function: "receiveGitCleanPreview", value: preview)
+            }
+        }
+    }
+
+    private func cleanGitChanges(trackedPaths: [String], untrackedPaths: [String]) {
+        let directory = currentDirectory
+        sendJavaScript(function: "setGitOperation", object: ["operation": "clean", "running": true])
+        loaderQueue.async { [weak self] in
+            guard let self else { return }
+            let result = self.gitRepository.clean(directory: directory, trackedPaths: trackedPaths, untrackedPaths: untrackedPaths)
+            DispatchQueue.main.async {
+                guard directory == self.currentDirectory else { return }
+                self.sendCodableJavaScript(
+                    function: "receiveGitOperation",
+                    value: GitOperationResponse(operation: "clean", success: result.success, message: result.message, status: result.status)
+                )
+                if result.success {
+                    self.currentSignature = ""
+                    self.refresh(force: true)
+                }
+            }
+        }
+    }
+
     private func refreshIfChanged() {
         let signature = loader.signature(for: currentDirectory)
         if !signature.isEmpty && signature != currentSignature {
@@ -1116,6 +1249,7 @@ private final class AppController: NSObject, NSApplicationDelegate, WKScriptMess
             guard let self else { return }
             do {
                 let payload = try self.loader.load(directory: directory)
+                let gitStatus = self.gitRepository.inspect(directory: directory)
                 let data = try JSONEncoder().encode(payload)
                 let object = try JSONSerialization.jsonObject(with: data)
                 DispatchQueue.main.async {
@@ -1123,6 +1257,7 @@ private final class AppController: NSObject, NSApplicationDelegate, WKScriptMess
                           directory == self.currentDirectory else { return }
                     self.currentSignature = signature
                     self.sendJavaScript(function: "receiveData", object: object)
+                    self.sendCodableJavaScript(function: "receiveGitStatus", value: gitStatus)
                     self.monitor.watch(path: directory.path) { [weak self] in self?.scheduleRefresh() }
                 }
             } catch {
@@ -1140,6 +1275,12 @@ private final class AppController: NSObject, NSApplicationDelegate, WKScriptMess
               let data = try? JSONSerialization.data(withJSONObject: object),
               let json = String(data: data, encoding: .utf8) else { return }
         webView.evaluateJavaScript("window.ConfigTool.\(function)(\(json));")
+    }
+
+    private func sendCodableJavaScript<Value: Encodable>(function: String, value: Value) {
+        guard let data = try? JSONEncoder().encode(value),
+              let object = try? JSONSerialization.jsonObject(with: data) else { return }
+        sendJavaScript(function: function, object: object)
     }
 
     private func showError(_ message: String) {
@@ -1218,6 +1359,119 @@ private func runGlobalSearchAudit(path: String, query: String) -> Int32 {
     }
 }
 
+private func runGitAudit(path: String) -> Int32 {
+    let status = GitRepositoryService().inspect(directory: URL(fileURLWithPath: path, isDirectory: true))
+    do {
+        let data = try JSONEncoder().encode(status)
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+        return status.isRepository ? 0 : 2
+    } catch {
+        FileHandle.standardError.write(Data("ConfigTool Git audit failed: \(error.localizedDescription)\n".utf8))
+        return 1
+    }
+}
+
+private func runGitSelfTest() -> Int32 {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PairPairConfigTool-Git-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    do {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let repository = directory.appendingPathComponent("clean-test", isDirectory: true)
+        try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+        try runSystemGit(in: repository, arguments: ["init", "-q"])
+        try runSystemGit(in: repository, arguments: ["config", "user.email", "configtool-self-test@example.invalid"])
+        try runSystemGit(in: repository, arguments: ["config", "user.name", "ConfigTool Self Test"])
+        let tracked = repository.appendingPathComponent("tracked.txt")
+        let trackedKeep = repository.appendingPathComponent("tracked-keep.txt")
+        let untracked = repository.appendingPathComponent("untracked.txt")
+        let untrackedKeep = repository.appendingPathComponent("untracked-keep.txt")
+        try "before\n".write(to: tracked, atomically: true, encoding: .utf8)
+        try "keep-before\n".write(to: trackedKeep, atomically: true, encoding: .utf8)
+        try runSystemGit(in: repository, arguments: ["add", "tracked.txt", "tracked-keep.txt"])
+        try runSystemGit(in: repository, arguments: ["commit", "-qm", "initial"])
+        try "changed\n".write(to: tracked, atomically: true, encoding: .utf8)
+        try "keep-changed\n".write(to: trackedKeep, atomically: true, encoding: .utf8)
+        try "untracked\n".write(to: untracked, atomically: true, encoding: .utf8)
+        try "keep-untracked\n".write(to: untrackedKeep, atomically: true, encoding: .utf8)
+        let git = GitRepositoryService()
+        let dirty = git.inspect(directory: repository)
+        guard dirty.isRepository, dirty.trackedChangeCount == 2, dirty.untrackedCount == 2 else {
+            throw NSError(domain: "ConfigTool.GitSelfTest", code: 1, userInfo: [NSLocalizedDescriptionKey: "Git 工作区状态识别不正确"])
+        }
+        let preview = git.previewClean(directory: repository)
+        guard preview.untrackedPaths.contains("untracked.txt"), preview.untrackedPaths.contains("untracked-keep.txt") else {
+            throw NSError(domain: "ConfigTool.GitSelfTest", code: 2, userInfo: [NSLocalizedDescriptionKey: "Git 未跟踪文件预览不正确"])
+        }
+        let restore = git.clean(directory: repository, trackedPaths: ["tracked.txt"], untrackedPaths: [])
+        guard restore.success,
+              try String(contentsOf: tracked, encoding: .utf8) == "before\n",
+              try String(contentsOf: trackedKeep, encoding: .utf8) == "keep-changed\n",
+              FileManager.default.fileExists(atPath: untracked.path) else {
+            throw NSError(domain: "ConfigTool.GitSelfTest", code: 3, userInfo: [NSLocalizedDescriptionKey: "Git 单文件恢复不正确"])
+        }
+        let delete = git.clean(directory: repository, trackedPaths: [], untrackedPaths: ["untracked.txt"])
+        guard delete.success,
+              !FileManager.default.fileExists(atPath: untracked.path),
+              FileManager.default.fileExists(atPath: untrackedKeep.path),
+              try String(contentsOf: trackedKeep, encoding: .utf8) == "keep-changed\n" else {
+            throw NSError(domain: "ConfigTool.GitSelfTest", code: 4, userInfo: [NSLocalizedDescriptionKey: "Git 单文件删除不正确"])
+        }
+        let finishClean = git.clean(directory: repository, trackedPaths: ["tracked-keep.txt"], untrackedPaths: ["untracked-keep.txt"])
+        guard finishClean.success,
+              try String(contentsOf: trackedKeep, encoding: .utf8) == "keep-before\n",
+              !FileManager.default.fileExists(atPath: untrackedKeep.path) else {
+            throw NSError(domain: "ConfigTool.GitSelfTest", code: 5, userInfo: [NSLocalizedDescriptionKey: "Git 选择清理收尾不正确"])
+        }
+
+        let remote = directory.appendingPathComponent("remote.git", isDirectory: true)
+        let producer = directory.appendingPathComponent("producer", isDirectory: true)
+        let consumer = directory.appendingPathComponent("consumer", isDirectory: true)
+        try runSystemGit(in: directory, arguments: ["init", "--bare", "-q", remote.path])
+        try FileManager.default.createDirectory(at: producer, withIntermediateDirectories: true)
+        try runSystemGit(in: producer, arguments: ["init", "-q"])
+        try runSystemGit(in: producer, arguments: ["config", "user.email", "configtool-self-test@example.invalid"])
+        try runSystemGit(in: producer, arguments: ["config", "user.name", "ConfigTool Self Test"])
+        let shared = producer.appendingPathComponent("shared.txt")
+        try "first\n".write(to: shared, atomically: true, encoding: .utf8)
+        try runSystemGit(in: producer, arguments: ["add", "shared.txt"])
+        try runSystemGit(in: producer, arguments: ["commit", "-qm", "first"])
+        try runSystemGit(in: producer, arguments: ["branch", "-M", "main"])
+        try runSystemGit(in: producer, arguments: ["remote", "add", "origin", remote.path])
+        try runSystemGit(in: producer, arguments: ["push", "-qu", "origin", "main"])
+        try runSystemGit(in: directory, arguments: ["--git-dir", remote.path, "symbolic-ref", "HEAD", "refs/heads/main"])
+        try runSystemGit(in: directory, arguments: ["clone", "-q", remote.path, consumer.path])
+        try "second\n".write(to: shared, atomically: true, encoding: .utf8)
+        try runSystemGit(in: producer, arguments: ["commit", "-am", "second", "-q"])
+        try runSystemGit(in: producer, arguments: ["push", "-q", "origin", "main"])
+        let pull = git.pull(directory: consumer)
+        guard pull.success, try String(contentsOf: consumer.appendingPathComponent("shared.txt"), encoding: .utf8) == "second\n" else {
+            throw NSError(domain: "ConfigTool.GitSelfTest", code: 6, userInfo: [NSLocalizedDescriptionKey: "Git 快进拉取不正确"])
+        }
+        FileHandle.standardOutput.write(Data("git_self_test=ok clean=ok pull=ok\n".utf8))
+        return 0
+    } catch {
+        FileHandle.standardError.write(Data("ConfigTool Git self test failed: \(error.localizedDescription)\n".utf8))
+        return 1
+    }
+}
+
+private func runSystemGit(in directory: URL, arguments: [String]) throws {
+    let process = Process()
+    let errors = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    process.currentDirectoryURL = directory
+    process.arguments = arguments
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = errors
+    try process.run()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+        let message = String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "Git 命令失败"
+        throw NSError(domain: "ConfigTool.GitSelfTest", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: message])
+    }
+}
+
 if let auditIndex = CommandLine.arguments.firstIndex(of: "--audit") {
     let path = CommandLine.arguments.indices.contains(auditIndex + 1) ? CommandLine.arguments[auditIndex + 1] : defaultConfigPath
     exit(runAudit(path: path))
@@ -1248,6 +1502,15 @@ if let auditIndex = CommandLine.arguments.firstIndex(of: "--global-search-audit"
     let path = arguments.indices.contains(auditIndex + 1) ? arguments[auditIndex + 1] : defaultConfigPath
     let query = arguments.indices.contains(auditIndex + 2) ? arguments[auditIndex + 2] : ""
     exit(runGlobalSearchAudit(path: path, query: query))
+}
+
+if let auditIndex = CommandLine.arguments.firstIndex(of: "--git-audit") {
+    let path = CommandLine.arguments.indices.contains(auditIndex + 1) ? CommandLine.arguments[auditIndex + 1] : defaultConfigPath
+    exit(runGitAudit(path: path))
+}
+
+if CommandLine.arguments.contains("--git-self-test") {
+    exit(runGitSelfTest())
 }
 
 private let application = NSApplication.shared

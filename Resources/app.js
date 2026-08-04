@@ -50,23 +50,40 @@
     globalTotalCount: 0,
     globalMatchIndex: -1,
     globalSearchTimer: null,
+    clipboardRequestId: 0,
+    pendingClipboardPastes: new Map(),
+    gitStatus: null,
+    gitOperation: "",
+    gitCleanPreview: null,
   };
 
   const el = {};
   const $ = (id) => document.getElementById(id);
   const send = (action, extra = {}) => {
-    window.webkit?.messageHandlers?.configTool?.postMessage({ action, ...extra });
+    const message = { action, ...extra };
+    if (window.webkit?.messageHandlers?.configTool) {
+      window.webkit.messageHandlers.configTool.postMessage(message);
+    } else if (window.chrome?.webview) {
+      window.chrome.webview.postMessage(message);
+    }
   };
 
   function bindElements() {
     [
       "tableSearch", "tableNavigation", "folderPath", "statusDot", "statusText",
+      "gitProjectButton", "gitProjectSummary", "gitProjectState", "gitProjectPanel",
+      "gitProjectDetailState", "gitProjectDetailMessage", "gitRepositoryRoot", "gitRemoteUrl",
+      "gitBranch", "gitWorkingTree", "closeGitProjectPanelButton",
       "navigationSummary",
       "categoryLabel", "sheetLabel", "workbookTitle", "globalSearch", "matchCount",
       "refreshButton", "chooseButton", "revealButton", "statWorkbook", "statRows",
       "statColumns", "statModified", "emptyState", "errorState", "errorMessage",
       "errorChooseButton", "tableViewport", "configTable", "toast", "editButton",
-      "saveButton", "modePill", "previousMatchButton", "nextMatchButton",
+      "saveButton", "modePill", "previousMatchButton", "nextMatchButton", "pullCodeButton",
+      "cleanChangesButton", "gitCleanModal", "closeGitCleanModalButton", "cancelGitCleanButton",
+      "confirmGitCleanButton", "selectAllTrackedCheckbox", "deleteUntrackedCheckbox", "deleteUntrackedOption",
+      "deleteUntrackedDescription", "gitCleanSummary", "gitCleanTrackedList", "gitCleanUntrackedList",
+      "gitFailureModal", "closeGitFailureModalButton", "acknowledgeGitFailureButton", "gitFailureMessage",
       "presetButton", "presetMenu",
       "presetMenuList", "saveCurrentPresetButton", "managePresetsButton",
       "presetModal", "closePresetModalButton", "cancelPresetChangesButton",
@@ -81,6 +98,8 @@
   }
 
   function bindEvents() {
+    bindTextEditingShortcuts(el.tableSearch);
+    bindTextEditingShortcuts(el.globalSearch);
     el.tableSearch.addEventListener("input", (event) => {
       state.tableFilter = event.target.value.trim().toLowerCase();
       renderNavigation();
@@ -127,12 +146,26 @@
     });
     el.errorChooseButton.addEventListener("click", () => send("chooseDirectory"));
     el.revealButton.addEventListener("click", () => send("revealDirectory"));
+    el.gitProjectButton.addEventListener("click", toggleGitProjectPanel);
+    el.closeGitProjectPanelButton.addEventListener("click", closeGitProjectPanel);
+    el.pullCodeButton.addEventListener("click", pullCode);
+    el.cleanChangesButton.addEventListener("click", previewGitClean);
+    el.closeGitCleanModalButton.addEventListener("click", closeGitCleanModal);
+    el.cancelGitCleanButton.addEventListener("click", closeGitCleanModal);
+    el.selectAllTrackedCheckbox.addEventListener("change", () => setGitCleanGroupSelection("tracked", el.selectAllTrackedCheckbox.checked));
+    el.deleteUntrackedCheckbox.addEventListener("change", () => setGitCleanGroupSelection("untracked", el.deleteUntrackedCheckbox.checked));
+    el.gitCleanTrackedList.addEventListener("change", renderGitCleanSelection);
+    el.gitCleanUntrackedList.addEventListener("change", renderGitCleanSelection);
+    el.confirmGitCleanButton.addEventListener("click", cleanGitChanges);
+    el.closeGitFailureModalButton.addEventListener("click", closeGitFailureModal);
+    el.acknowledgeGitFailureButton.addEventListener("click", closeGitFailureModal);
     el.editButton.addEventListener("click", toggleEditMode);
     el.saveButton.addEventListener("click", saveChanges);
     el.presetButton.addEventListener("click", (event) => {
       event.stopPropagation();
       renderPresetMenu();
-      el.presetMenu.classList.toggle("hidden");
+      if (el.presetMenu.classList.contains("hidden")) openPresetMenu();
+      else closePresetMenu();
     });
     el.saveCurrentPresetButton.addEventListener("click", () => {
       closePresetMenu();
@@ -152,8 +185,15 @@
     el.presetModal.addEventListener("click", (event) => {
       if (event.target === el.presetModal) closePresetModal();
     });
+    el.gitCleanModal.addEventListener("click", (event) => {
+      if (event.target === el.gitCleanModal) closeGitCleanModal();
+    });
+    el.gitFailureModal.addEventListener("click", (event) => {
+      if (event.target === el.gitFailureModal) closeGitFailureModal();
+    });
     document.addEventListener("click", (event) => {
-      if (!event.target.closest(".preset-control")) closePresetMenu();
+      if (!event.target.closest(".preset-control") && !event.target.closest(".preset-menu")) closePresetMenu();
+      if (!event.target.closest(".git-project-card") && !event.target.closest(".git-project-panel")) closeGitProjectPanel();
       if (!event.target.closest(".relation-chooser")) closeRelationChooser();
       if (!event.target.closest(".reverse-reference-panel") && !event.altKey) {
         closeReverseReferencePanel();
@@ -195,6 +235,8 @@
         closeRelationChooser();
         closeReverseReferencePanel();
         closeGlobalSearchPanel();
+        closeGitProjectPanel();
+        closeGitCleanModal();
       }
     });
     document.addEventListener("keyup", (event) => {
@@ -205,6 +247,80 @@
       document.body.classList.remove("relation-modifier-active");
       document.body.classList.remove("reverse-modifier-active");
     });
+  }
+
+  function bindTextEditingShortcuts(input) {
+    input.addEventListener("keydown", (event) => {
+      if (event.altKey || !(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === "a") {
+        event.preventDefault();
+        input.select();
+        return;
+      }
+      if (key === "c" || key === "x") {
+        const start = input.selectionStart ?? 0;
+        const end = input.selectionEnd ?? start;
+        if (start === end) return;
+        event.preventDefault();
+        writeClipboardText(input.value.slice(start, end));
+        if (key === "x") {
+          input.setRangeText("", start, end, "start");
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        return;
+      }
+      if (key === "v") {
+        event.preventDefault();
+        requestClipboardPaste(input);
+      }
+    });
+  }
+
+  function hasNativeClipboardBridge() {
+    return Boolean(window.webkit?.messageHandlers?.configTool || window.chrome?.webview);
+  }
+
+  function writeClipboardText(text) {
+    if (hasNativeClipboardBridge()) {
+      send("writeClipboard", { text });
+      return;
+    }
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {});
+      return;
+    }
+    document.execCommand?.("copy");
+  }
+
+  function requestClipboardPaste(input) {
+    const requestId = ++state.clipboardRequestId;
+    state.pendingClipboardPastes.set(requestId, {
+      input,
+      selectionStart: input.selectionStart ?? input.value.length,
+      selectionEnd: input.selectionEnd ?? input.value.length
+    });
+    if (hasNativeClipboardBridge()) {
+      send("readClipboard", { requestId });
+      return;
+    }
+    if (navigator.clipboard?.readText) {
+      navigator.clipboard.readText()
+        .then((text) => receiveClipboardText({ requestId, text }))
+        .catch(() => state.pendingClipboardPastes.delete(requestId));
+    } else {
+      state.pendingClipboardPastes.delete(requestId);
+    }
+  }
+
+  function receiveClipboardText({ requestId, text }) {
+    const pending = state.pendingClipboardPastes.get(Number(requestId));
+    state.pendingClipboardPastes.delete(Number(requestId));
+    if (!pending?.input?.isConnected) return;
+    const input = pending.input;
+    input.focus();
+    input.setRangeText(String(text || ""), pending.selectionStart, pending.selectionEnd, "end");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
   function activeWorkbook() {
@@ -323,6 +439,24 @@
 
   function closePresetMenu() {
     el.presetMenu.classList.add("hidden");
+  }
+
+  function openPresetMenu() {
+    el.presetMenu.classList.remove("hidden");
+    positionPresetMenu();
+  }
+
+  function positionPresetMenu() {
+    if (el.presetMenu.classList.contains("hidden")) return;
+    const margin = 14;
+    const buttonRect = el.presetButton.getBoundingClientRect();
+    const width = Math.min(310, Math.max(220, window.innerWidth - margin * 2));
+    el.presetMenu.style.width = `${width}px`;
+    const left = Math.max(margin, Math.min(buttonRect.right - width, window.innerWidth - width - margin));
+    el.presetMenu.style.left = `${left}px`;
+    const preferredTop = buttonRect.bottom + 7;
+    const top = Math.max(margin, Math.min(preferredTop, window.innerHeight - el.presetMenu.offsetHeight - margin));
+    el.presetMenu.style.top = `${top}px`;
   }
 
   function switchToPreset(preset) {
@@ -446,10 +580,180 @@
       : `${state.payload.fileCount} 个文件 / ${state.payload.workbooks.length} 个 Sheet 已同步`;
     el.statWorkbook.textContent = `${state.payload.fileCount.toLocaleString("zh-CN")} / ${state.payload.workbooks.length.toLocaleString("zh-CN")}`;
     updatePresetButton();
+    renderGitStatus();
     renderPresetMenu();
     updateRelationHistoryUI();
     renderNavigation();
     renderTable();
+  }
+
+  function gitStateLabel(git) {
+    if (!git) return "检测中";
+    if (git.state === "error") return "不可用";
+    if (!git.isRepository) return "未识别";
+    if (git.state === "warning") return "需处理";
+    if (git.state === "ready") return "可拉取";
+    return "已同步";
+  }
+
+  function renderGitStatus() {
+    const git = state.gitStatus;
+    const busy = Boolean(state.gitOperation);
+    el.gitProjectButton.classList.remove("warning", "error");
+
+    if (!git) {
+      el.gitProjectSummary.textContent = "正在识别当前目录…";
+      el.gitProjectState.textContent = "检测中";
+      el.gitProjectButton.disabled = true;
+      el.pullCodeButton.disabled = busy;
+      el.cleanChangesButton.disabled = true;
+      el.pullCodeButton.querySelector("span").textContent = "拉取代码";
+      el.cleanChangesButton.textContent = "清理改动";
+      return;
+    }
+
+    const branch = git.branch || "游离提交";
+    const upstream = git.upstream || (git.remoteName ? `${git.remoteName}（未设上游）` : "未设上游");
+    el.gitProjectSummary.textContent = git.isRepository ? `${branch} · ${upstream}` : git.message;
+    el.gitProjectState.textContent = gitStateLabel(git);
+    el.gitProjectButton.disabled = false;
+    el.gitProjectButton.classList.toggle("warning", git.state === "warning" || git.state === "inactive");
+    el.gitProjectButton.classList.toggle("error", git.state === "error");
+
+    el.pullCodeButton.disabled = busy;
+    el.cleanChangesButton.disabled = !git.canClean || busy;
+    el.pullCodeButton.querySelector("span").textContent = state.gitOperation === "pull" ? "拉取中…" : "拉取代码";
+    el.cleanChangesButton.textContent = state.gitOperation === "previewClean" || state.gitOperation === "clean" ? "处理中…" : "清理改动";
+
+    el.gitProjectDetailState.textContent = gitStateLabel(git);
+    el.gitProjectDetailMessage.textContent = git.message || "—";
+    el.gitRepositoryRoot.textContent = git.repositoryRoot || "—";
+    el.gitRepositoryRoot.title = git.repositoryRoot || "";
+    el.gitRemoteUrl.textContent = git.remoteName ? `${git.remoteName} · ${git.remoteUrl || "未读取到地址"}` : "—";
+    el.gitRemoteUrl.title = git.remoteUrl || "";
+    el.gitBranch.textContent = git.branch ? `${git.branch}${git.upstream ? ` → ${git.upstream}` : "（未设上游）"}` : "游离提交";
+    const changeCount = Number(git.trackedChangeCount || 0) + Number(git.untrackedCount || 0);
+    el.gitWorkingTree.textContent = changeCount ? `${changeCount} 项本地改动` : (git.behind ? `落后上游 ${git.behind} 个提交` : "工作区干净");
+  }
+
+  function toggleGitProjectPanel() {
+    if (!state.gitStatus) {
+      send("refreshGitStatus");
+      return;
+    }
+    el.gitProjectPanel.classList.toggle("hidden");
+  }
+
+  function closeGitProjectPanel() {
+    el.gitProjectPanel.classList.add("hidden");
+  }
+
+  function pullCode() {
+    if (state.gitOperation) return;
+    if (!confirmDiscard()) return;
+    send("pullGit");
+  }
+
+  function previewGitClean() {
+    if (state.gitOperation || !state.gitStatus?.canClean) {
+      showToast(state.gitStatus?.message || "当前目录不能清理");
+      return;
+    }
+    if (!confirmDiscard()) return;
+    send("previewGitClean");
+  }
+
+  function openGitCleanModal(preview) {
+    state.gitCleanPreview = preview;
+    const tracked = (preview.status?.changes || []).filter((change) => change.kind === "tracked");
+    const untracked = preview.untrackedPaths || [];
+    el.gitCleanSummary.textContent = "请选择要恢复或删除的项目。恢复和删除都不可撤销；Git 忽略文件不会显示，也不会被删除。";
+    el.gitCleanTrackedList.replaceChildren();
+    tracked.forEach((change) => {
+      const item = createGitCleanFileItem("tracked", change.path, `${change.status}  ${change.path}`, true);
+      el.gitCleanTrackedList.appendChild(item);
+    });
+    el.gitCleanUntrackedList.replaceChildren();
+    untracked.forEach((path) => {
+      const item = createGitCleanFileItem("untracked", path, path, false);
+      el.gitCleanUntrackedList.appendChild(item);
+    });
+    el.selectAllTrackedCheckbox.checked = Boolean(tracked.length);
+    el.selectAllTrackedCheckbox.indeterminate = false;
+    el.selectAllTrackedCheckbox.disabled = !tracked.length;
+    el.deleteUntrackedCheckbox.checked = false;
+    el.deleteUntrackedCheckbox.disabled = !untracked.length;
+    el.deleteUntrackedOption.classList.toggle("disabled", !untracked.length);
+    el.deleteUntrackedDescription.textContent = untracked.length
+      ? `可逐项勾选，或在这里一次全选 ${untracked.length} 项；确认后只会对所选项目执行 git clean -df。`
+      : "没有可删除的未跟踪文件或目录；Git 忽略文件不会被删除。";
+    el.gitCleanModal.classList.remove("hidden");
+    renderGitCleanSelection();
+  }
+
+  function createGitCleanFileItem(kind, path, label, checked) {
+    const item = document.createElement("label");
+    item.className = "git-clean-file-item";
+    item.title = label;
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = path;
+    checkbox.checked = checked;
+    checkbox.dataset.gitCleanKind = kind;
+    const text = document.createElement("span");
+    text.textContent = label;
+    item.append(checkbox, text);
+    return item;
+  }
+
+  function gitCleanSelectedPaths(kind) {
+    const container = kind === "tracked" ? el.gitCleanTrackedList : el.gitCleanUntrackedList;
+    return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value);
+  }
+
+  function setGitCleanGroupSelection(kind, checked) {
+    const container = kind === "tracked" ? el.gitCleanTrackedList : el.gitCleanUntrackedList;
+    container.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.checked = checked; });
+    renderGitCleanSelection();
+  }
+
+  function renderGitCleanSelection() {
+    const preview = state.gitCleanPreview;
+    if (!preview) return;
+    const trackedInputs = Array.from(el.gitCleanTrackedList.querySelectorAll('input[type="checkbox"]'));
+    const untrackedInputs = Array.from(el.gitCleanUntrackedList.querySelectorAll('input[type="checkbox"]'));
+    const trackedPaths = gitCleanSelectedPaths("tracked");
+    const untrackedPaths = gitCleanSelectedPaths("untracked");
+    el.selectAllTrackedCheckbox.checked = trackedInputs.length > 0 && trackedPaths.length === trackedInputs.length;
+    el.selectAllTrackedCheckbox.indeterminate = trackedPaths.length > 0 && trackedPaths.length < trackedInputs.length;
+    el.deleteUntrackedCheckbox.checked = untrackedInputs.length > 0 && untrackedPaths.length === untrackedInputs.length;
+    el.deleteUntrackedCheckbox.indeterminate = untrackedPaths.length > 0 && untrackedPaths.length < untrackedInputs.length;
+    const selectedCount = trackedPaths.length + untrackedPaths.length;
+    el.confirmGitCleanButton.disabled = Boolean(state.gitOperation) || selectedCount === 0;
+    el.confirmGitCleanButton.textContent = selectedCount ? `清理所选 ${selectedCount} 项` : "请选择要清理的项目";
+  }
+
+  function closeGitCleanModal() {
+    if (state.gitOperation === "clean") return;
+    state.gitCleanPreview = null;
+    el.gitCleanModal.classList.add("hidden");
+  }
+
+  function cleanGitChanges() {
+    if (!state.gitCleanPreview || state.gitOperation || el.confirmGitCleanButton.disabled) return;
+    send("cleanGitChanges", {
+      trackedPaths: gitCleanSelectedPaths("tracked"),
+      untrackedPaths: gitCleanSelectedPaths("untracked")
+    });
+  }
+
+  function openGitFailureModal(message) {
+    el.gitFailureMessage.textContent = message || "Git 拉取失败。";
+    el.gitFailureModal.classList.remove("hidden");
+  }
+
+  function closeGitFailureModal() {
+    el.gitFailureModal.classList.add("hidden");
   }
 
   function renderNavigation() {
@@ -1463,6 +1767,10 @@
         state.pendingLocation = null;
         state.backStack = [];
         state.forwardStack = [];
+        state.gitStatus = null;
+        state.gitCleanPreview = null;
+        closeGitProjectPanel();
+        closeGitCleanModal();
       }
       state.payload = payload;
       state.loadingIds.clear();
@@ -1553,6 +1861,44 @@
       closeGlobalSearchPanel();
       showToast(error.message || "全局搜索失败");
     },
+    receiveGitStatus(status) {
+      state.gitStatus = status || null;
+      renderGitStatus();
+    },
+    receiveClipboardText(response) {
+      receiveClipboardText(response || {});
+    },
+    setGitOperation({ operation, running }) {
+      state.gitOperation = running ? operation || "operation" : "";
+      renderGitStatus();
+      renderGitCleanSelection();
+    },
+    receiveGitCleanPreview(preview) {
+      state.gitOperation = "";
+      state.gitStatus = preview?.status || state.gitStatus;
+      renderGitStatus();
+      if (!preview?.status?.canClean) {
+        showToast(preview?.message || preview?.status?.message || "当前目录不能清理");
+        return;
+      }
+      if (preview.message) {
+        showToast(preview.message);
+        return;
+      }
+      openGitCleanModal(preview);
+    },
+    receiveGitOperation(response) {
+      state.gitOperation = "";
+      state.gitStatus = response?.status || state.gitStatus;
+      if (response?.operation === "clean") closeGitCleanModal();
+      renderGitStatus();
+      renderGitCleanSelection();
+      if (response?.operation === "pull" && !response?.success) {
+        openGitFailureModal(response?.message);
+      } else {
+        showToast(response?.message || "Git 操作已完成");
+      }
+    },
     receiveError(error) {
       state.loading = false;
       el.refreshButton.classList.remove("loading");
@@ -1597,6 +1943,7 @@
   window.addEventListener("resize", () => requestAnimationFrame(() => {
     updateStickyHeaderOffsets();
     if (!el.globalSearchPanel.classList.contains("hidden")) showGlobalSearchPanel();
+    positionPresetMenu();
   }));
   send("ready");
 })();

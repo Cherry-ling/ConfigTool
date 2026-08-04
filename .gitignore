@@ -6,3 +6,9 @@
 
 # Rebuildable application bundle
 PairPair ConfigTool.app/
+PairPair ConfigTool.exe
+
+# .NET build outputs and local Windows releases
+Windows/**/bin/
+Windows/**/obj/
+dist/

@@ -16,6 +16,16 @@
 
 注意：`match3/LuaProject/gen/conf` 属于生成结果，直接保存可以修改本地 Lua 文件，但下次重新生成配置时可能被覆盖。
 
+## Git 代码同步
+
+当选择的配置目录位于 Git 项目的子目录中，左下角会自动显示“Git 项目”卡片。它会从当前配置目录向上识别仓库根目录，读取当前分支、上游分支和实际远程地址；不会使用或修改 ConfigTool 自己的仓库地址，也不会创建额外克隆或切换分支。
+
+“拉取代码”始终可点击（执行中除外）。它会直接运行 `git pull --ff-only`，不自动合并或变基；如果分支、网络、本地改动或远程状态导致拉取失败，工具会弹出 Git 的失败原因，不会再把按钮置灰。
+
+“清理改动”会先预览，并将每个已跟踪改动和未跟踪文件/目录列为可勾选项。已跟踪改动默认全选，未跟踪项默认不选；确认时只对选中的已跟踪文件执行 `git restore --source=HEAD --staged --worktree -- <路径>`，只对选中的未跟踪项执行 `git clean -df -- <路径>`。被 Git 忽略的文件不会显示或删除。
+
+存在未解决冲突时，工具不会执行清理；请先在常用 Git 工具中处理后再操作。
+
 ## 关联跳转
 
 按住 `Command` 或 `Ctrl` 单击带有关联关系的单元格，可以跳到对应配置表并高亮目标行。工具支持普通 ID、父子表分组、`ID + SubID` 以及奖励 JSON 中的物品 ID。
@@ -39,6 +49,26 @@
 
 ## 重新构建
 
+项目根目录只放可直接使用的应用：`PairPair ConfigTool.app`（macOS）和 `PairPair ConfigTool.exe`（Windows）。`Resources/` 是两个平台共用的界面资源；平台原生实现分别在 `macOS/` 与 `Windows/`。
+
+### macOS
+
 ```bash
-./build.sh
+./macOS/build.sh
+```
+
+### Windows
+
+支持 Windows 10/11 x64，应用使用系统的 Microsoft Edge WebView2 Runtime（通常随 Edge/Windows 安装；缺少时启动会给出提示）。在 PowerShell 中执行：
+
+```powershell
+.\Windows\build-windows.ps1
+```
+
+会在根目录生成 `PairPair ConfigTool.exe`。分发时请带上根目录同级的 `Resources` 文件夹。
+
+如需 Windows on ARM，在 PowerShell 执行：
+
+```powershell
+.\Windows\build-windows.ps1 -Runtime win-arm64
 ```

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PairPair ConfigTool</title>
-  <link rel="stylesheet" href="styles.css?v=1.5.0">
+  <link rel="stylesheet" href="styles.css?v=2.0.0">
 </head>
 <body>
   <div class="app-shell">
@@ -31,6 +31,16 @@
       <nav id="tableNavigation" class="table-navigation"></nav>
 
       <div class="sidebar-footer">
+        <button id="gitProjectButton" class="git-project-card" type="button" title="查看当前配置目录所属 Git 项目">
+          <span class="git-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><path d="M6 8.2v7.6M8.2 6h7.6"/></svg>
+          </span>
+          <span class="git-card-copy">
+            <strong>Git 项目</strong>
+            <small id="gitProjectSummary">正在识别当前目录…</small>
+          </span>
+          <span id="gitProjectState" class="git-card-state">检测中</span>
+        </button>
         <button id="revealButton" class="folder-card">
           <span class="folder-icon">⌘</span>
           <span>
@@ -79,6 +89,11 @@
           <button id="refreshButton" class="icon-button" title="刷新">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5m9.2-4A7.5 7.5 0 0 0 5.7 6.7L4 8m16 8-1.7 1.3A7.5 7.5 0 0 1 5.8 15"/></svg>
           </button>
+          <button id="pullCodeButton" class="primary-button git-pull-button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 20h14"/></svg>
+            <span>拉取代码</span>
+          </button>
+          <button id="cleanChangesButton" class="secondary-button git-clean-button" disabled>清理改动</button>
           <button id="editButton" class="secondary-button">编辑</button>
           <button id="saveButton" class="primary-button" disabled>保存</button>
           <div class="preset-control">
@@ -149,7 +164,76 @@
     </div>
   </div>
 
+  <div id="gitCleanModal" class="modal-backdrop hidden">
+    <div class="git-clean-modal" role="dialog" aria-modal="true" aria-labelledby="gitCleanModalTitle">
+      <div class="preset-modal-header">
+        <div>
+          <h3 id="gitCleanModalTitle">清理本地改动</h3>
+          <p>将恢复已跟踪文件到当前 HEAD；此操作不可撤销。</p>
+        </div>
+        <button id="closeGitCleanModalButton" class="modal-close-button" title="关闭">×</button>
+      </div>
+      <div class="git-clean-content">
+        <div id="gitCleanSummary" class="git-clean-summary"></div>
+        <section class="git-clean-section">
+          <div class="git-clean-section-header">
+            <strong>已跟踪改动</strong>
+            <label class="git-clean-select-all">
+              <input id="selectAllTrackedCheckbox" type="checkbox">
+              <span>全选</span>
+            </label>
+          </div>
+          <div id="gitCleanTrackedList" class="git-clean-file-list"></div>
+        </section>
+        <section class="git-clean-section">
+          <label id="deleteUntrackedOption" class="git-clean-option">
+            <input id="deleteUntrackedCheckbox" type="checkbox">
+            <span>
+              <strong>选择全部未跟踪的文件和目录</strong>
+              <small id="deleteUntrackedDescription">也可以只勾选下方个别项目；不会删除被 Git 忽略的文件。</small>
+            </span>
+          </label>
+          <div id="gitCleanUntrackedList" class="git-clean-file-list git-clean-untracked"></div>
+        </section>
+      </div>
+      <div class="preset-modal-footer git-clean-footer">
+        <span class="modal-spacer"></span>
+        <button id="cancelGitCleanButton" class="secondary-button">取消</button>
+        <button id="confirmGitCleanButton" class="danger-button" disabled>恢复本地改动</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
+  <div id="gitFailureModal" class="modal-backdrop hidden">
+    <div class="git-failure-modal" role="alertdialog" aria-modal="true" aria-labelledby="gitFailureModalTitle">
+      <div class="preset-modal-header">
+        <div>
+          <h3 id="gitFailureModalTitle">拉取代码失败</h3>
+          <p>当前代码未被工具修改。</p>
+        </div>
+        <button id="closeGitFailureModalButton" class="modal-close-button" title="关闭">×</button>
+      </div>
+      <pre id="gitFailureMessage" class="git-failure-message"></pre>
+      <div class="preset-modal-footer git-failure-footer">
+        <span class="modal-spacer"></span>
+        <button id="acknowledgeGitFailureButton" class="primary-button">知道了</button>
+      </div>
+    </div>
+  </div>
+  <div id="gitProjectPanel" class="git-project-panel hidden" role="dialog" aria-label="Git 项目详情">
+    <div class="git-project-panel-header">
+      <div><strong>Git 项目</strong><small id="gitProjectDetailState">正在识别…</small></div>
+      <button id="closeGitProjectPanelButton" title="关闭">×</button>
+    </div>
+    <p id="gitProjectDetailMessage" class="git-project-message"></p>
+    <dl class="git-project-meta">
+      <div><dt>仓库根目录</dt><dd id="gitRepositoryRoot">—</dd></div>
+      <div><dt>远程地址</dt><dd id="gitRemoteUrl">—</dd></div>
+      <div><dt>当前分支</dt><dd id="gitBranch">—</dd></div>
+      <div><dt>本地状态</dt><dd id="gitWorkingTree">—</dd></div>
+    </dl>
+  </div>
   <div id="relationChooser" class="relation-chooser hidden">
     <div class="relation-chooser-title">选择要跳转的配置</div>
     <div id="relationChooserList"></div>
@@ -174,7 +258,7 @@
     </div>
     <div id="reverseReferenceList" class="reverse-reference-list"></div>
   </div>
-  <script src="relationships.js?v=1.5.0"></script>
-  <script src="app.js?v=1.5.0"></script>
+  <script src="relationships.js?v=2.0.0"></script>
+  <script src="app.js?v=2.0.0"></script>
 </body>
 </html>
