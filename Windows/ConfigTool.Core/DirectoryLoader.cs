@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace PairPair.ConfigTool.Core;
@@ -100,32 +101,47 @@ public sealed class DirectoryLoader
         }
     }
 
-    public List<ReverseReference> FindReverseReferences(string directory, string value, List<string> targetTokens, List<string> scalarFields, List<string> jsonFields)
+    public List<ReverseReference> FindReverseReferences(
+        string directory,
+        string value,
+        List<string> targetTokens,
+        List<string> scalarFields,
+        List<string> jsonFields,
+        List<RelationRule>? relationRules = null)
     {
         var payload = Load(directory, includeRows: true);
         var wantedTokens = targetTokens.Select(NormalizeRelationToken).Where(token => !string.IsNullOrEmpty(token)).ToHashSet(StringComparer.Ordinal);
-        var scalarFieldSet = scalarFields.Select(field => field.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal);
-        var jsonFieldSet = jsonFields.Select(field => field.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal);
+        var scalarFieldSet = scalarFields.Select(FieldName).ToHashSet(StringComparer.Ordinal);
+        var jsonFieldSet = jsonFields.Select(FieldName).ToHashSet(StringComparer.Ordinal);
+        relationRules ??= [];
         var expected = ComparableRelationValue(value);
         var references = new List<ReverseReference>();
 
         foreach (var workbook in payload.Workbooks.Where(workbook => workbook.Error is null && workbook.Rows.Count > 3))
         {
-            var headers = workbook.Rows.Count > 1 ? workbook.Rows[1] : [];
+            var headers = FieldHeaders(workbook);
             var sourceTokens = WorkbookRelationTokens(workbook);
             var sourcePrimaryToken = WorkbookPrimaryRelationToken(workbook);
-            var nameColumn = headers.FindIndex(field => string.Equals(field.Trim(), "name", StringComparison.OrdinalIgnoreCase));
+            var nameColumn = headers.FindIndex(field => FieldName(field) == "name");
             for (var column = 0; column < workbook.ColumnCount; column++)
             {
                 if (column >= headers.Count) continue;
                 var field = headers[column].Trim();
                 if (string.IsNullOrEmpty(field)) continue;
-                var lowerField = field.ToLowerInvariant();
+                var lowerField = FieldName(field);
                 string? mode = null;
-                if (jsonFieldSet.Contains(lowerField)) mode = "jsonKeys";
+                var tupleIndex = 0;
+                var explicitRule = relationRules.FirstOrDefault(rule =>
+                    RuleAppliesToWorkbook(rule, sourceTokens) && rule.Fields.Any(candidate => FieldName(candidate) == lowerField));
+                if (explicitRule is not null)
+                {
+                    mode = explicitRule.Mode;
+                    tupleIndex = explicitRule.TupleIndex;
+                }
+                else if (jsonFieldSet.Contains(lowerField)) mode = "jsonKeys";
                 else if (scalarFieldSet.Contains(lowerField)) mode = "scalar";
                 else if (InferredRelationTarget(field) is string inferred && wantedTokens.Contains(NormalizeRelationToken(inferred))) mode = "scalar";
-                else if ((lowerField is "id" or "subid") && wantedTokens.Any(target => target.Length >= 4 && sourcePrimaryToken.StartsWith(target, StringComparison.Ordinal) && sourcePrimaryToken.Length > target.Length)) mode = "scalar";
+                else if (IsIdentifierField(field) && wantedTokens.Any(target => target.Length >= 4 && sourcePrimaryToken.StartsWith(target, StringComparison.Ordinal) && sourcePrimaryToken.Length > target.Length)) mode = "scalar";
                 else if (sourceTokens.Contains("activity") && lowerField == "subid") mode = "activitySubId";
                 if (mode is null) continue;
 
@@ -138,6 +154,8 @@ public sealed class DirectoryLoader
                     {
                         "jsonKeys" => JsonKeys(cellValue).Any(key => ComparableRelationValue(key) == expected),
                         "activitySubId" => wantedTokens.Contains(NormalizeRelationToken(rowName ?? "")) && ComparableRelationValue(cellValue) == expected,
+                        "list" => StructuredRelationValues(cellValue, null).Any(item => ComparableRelationValue(item) == expected),
+                        "tuple" => StructuredRelationValues(cellValue, tupleIndex).Any(item => ComparableRelationValue(item) == expected),
                         _ => ComparableRelationValue(cellValue) == expected
                     };
                     if (!matches) continue;
@@ -167,7 +185,7 @@ public sealed class DirectoryLoader
         var totalCount = 0;
         foreach (var workbook in payload.Workbooks.Where(workbook => workbook.Error is null && workbook.Rows.Count > 3))
         {
-            var headers = workbook.Rows.Count > 1 ? workbook.Rows[1] : [];
+            var headers = FieldHeaders(workbook);
             var label = workbook.SheetCount > 1 ? $"{workbook.Name} · {workbook.SheetName}" : workbook.Name;
             for (var row = 3; row < workbook.Rows.Count; row++)
             {
@@ -221,6 +239,38 @@ public sealed class DirectoryLoader
         Error = workbook.Error
     };
 
+    private static List<string> FieldHeaders(WorkbookView workbook)
+    {
+        foreach (var headers in workbook.Rows.Take(3))
+        {
+            if (headers.Any(IsIdentifierField))
+                return headers;
+        }
+        for (var index = 1; index < Math.Min(3, workbook.Rows.Count); index++)
+        {
+            var values = workbook.Rows[index].Where(value => !string.IsNullOrWhiteSpace(value)).ToList();
+            if (values.Count >= 2 && values.Count(LooksLikeFieldType) >= 2) return workbook.Rows[index - 1];
+        }
+        return workbook.Rows.Count > 1 ? workbook.Rows[1] : workbook.Rows.FirstOrDefault() ?? [];
+    }
+
+    private static string FieldName(string value) => value.Trim().Split('@')[0].Trim().ToLowerInvariant();
+
+    private static bool IsIdentifierField(string value)
+    {
+        var raw = value.Trim();
+        var field = FieldName(raw);
+        return field is "id" or "subid" || raw.EndsWith("@id", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool LooksLikeFieldType(string value) => Regex.IsMatch(
+        value.Trim(),
+        @"^(?:repeated\s+)*(?:u?int(?:8|16|32|64)?|u?long|float|double|bool|boolean|string|json|[a-z][a-z0-9_]*enum|e[a-z][a-z0-9_]*)$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static bool RuleAppliesToWorkbook(RelationRule rule, HashSet<string> sourceTokens) =>
+        rule.Sources.Count == 0 || rule.Sources.Any(source => sourceTokens.Contains(NormalizeRelationToken(source)));
+
     private static List<string> ConfigUrls(string directory)
     {
         if (!Directory.Exists(directory)) throw new DirectoryNotFoundException("配置目录不存在，请重新选择目录。");
@@ -273,5 +323,52 @@ public sealed class DirectoryLoader
     {
         if (!value.Contains('{')) return [];
         return Regex.Matches(value, @"[""']?([a-zA-Z0-9_.:-]+)[""']?\s*:", RegexOptions.CultureInvariant).Select(match => match.Groups[1].Value).ToList();
+    }
+
+    private static List<string> StructuredRelationValues(string value, int? tupleIndex)
+    {
+        var values = new List<string>();
+        try
+        {
+            using var document = JsonDocument.Parse(value);
+            Visit(document.RootElement);
+        }
+        catch
+        {
+            if (tupleIndex is int index)
+            {
+                foreach (Match tuple in Regex.Matches(value, @"\[[^\[\]]*\]", RegexOptions.CultureInvariant))
+                {
+                    var parts = tuple.Value[1..^1].Split(',');
+                    if (index < parts.Length) values.Add(parts[index].Trim().Trim('"', '\''));
+                }
+            }
+            else
+            {
+                values.AddRange(Regex.Matches(value, @"-?\d+(?:\.\d+)?|[a-zA-Z_][\w.-]*", RegexOptions.CultureInvariant).Select(match => match.Value));
+            }
+        }
+        return values.Where(item => !string.IsNullOrWhiteSpace(item)).Distinct(StringComparer.Ordinal).ToList();
+
+        void Visit(JsonElement element)
+        {
+            if (element.ValueKind != JsonValueKind.Array) return;
+            var children = element.EnumerateArray().ToList();
+            var tuple = children.Count > 0 && children.All(child => child.ValueKind is not JsonValueKind.Array and not JsonValueKind.Object);
+            if (tuple && tupleIndex is int index && index < children.Count)
+            {
+                values.Add(PrimitiveText(children[index]));
+                return;
+            }
+            foreach (var child in children)
+            {
+                if (child.ValueKind == JsonValueKind.Array) Visit(child);
+                else if (tupleIndex is null) values.Add(PrimitiveText(child));
+            }
+        }
+
+        static string PrimitiveText(JsonElement element) => element.ValueKind == JsonValueKind.String
+            ? element.GetString() ?? ""
+            : element.GetRawText();
     }
 }

@@ -54,6 +54,20 @@ struct ReverseReferenceResponse: Codable {
     let references: [ReverseReference]
 }
 
+private struct RelationRule {
+    let sources: [String]
+    let fields: [String]
+    let mode: String
+    let tupleIndex: Int
+
+    init(dictionary: [String: Any]) {
+        sources = dictionary["sources"] as? [String] ?? []
+        fields = dictionary["fields"] as? [String] ?? []
+        mode = dictionary["mode"] as? String ?? "scalar"
+        tupleIndex = dictionary["tupleIndex"] as? Int ?? (dictionary["tupleIndex"] as? NSNumber)?.intValue ?? 0
+    }
+}
+
 struct GlobalSearchMatch: Codable {
     let bookId: String
     let bookLabel: String
@@ -520,38 +534,43 @@ private final class DirectoryLoader {
         value: String,
         targetTokens: [String],
         scalarFields: [String],
-        jsonFields: [String]
+        jsonFields: [String],
+        relationRules: [RelationRule] = []
     ) throws -> [ReverseReference] {
         let payload = try load(directory: directory, includeRows: true)
         let wantedTokens = Set(targetTokens.map(Self.normalizeRelationToken).filter { !$0.isEmpty })
-        let scalarFieldSet = Set(scalarFields.map { $0.lowercased() })
-        let jsonFieldSet = Set(jsonFields.map { $0.lowercased() })
+        let scalarFieldSet = Set(scalarFields.map(Self.fieldName))
+        let jsonFieldSet = Set(jsonFields.map(Self.fieldName))
         let expected = Self.comparableRelationValue(value)
         var references: [ReverseReference] = []
 
         for workbook in payload.workbooks where workbook.error == nil && workbook.rows.count > 3 {
-            let headers = workbook.rows.count > 1 ? workbook.rows[1] : []
+            let headers = Self.fieldHeaders(for: workbook)
             let sourceTokens = Self.workbookRelationTokens(workbook)
             let sourcePrimaryToken = Self.workbookPrimaryRelationToken(workbook)
-            let nameColumn = headers.firstIndex {
-                $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "name"
-            }
+            let nameColumn = headers.firstIndex { Self.fieldName($0) == "name" }
 
             for column in 0..<workbook.columnCount {
                 guard column < headers.count else { continue }
                 let field = headers[column].trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !field.isEmpty else { continue }
-                let lowerField = field.lowercased()
+                let lowerField = Self.fieldName(field)
                 var mode: String?
+                var tupleIndex = 0
 
-                if jsonFieldSet.contains(lowerField) {
+                if let rule = relationRules.first(where: {
+                    Self.ruleApplies($0, sourceTokens: sourceTokens) && $0.fields.contains(where: { Self.fieldName($0) == lowerField })
+                }) {
+                    mode = rule.mode
+                    tupleIndex = rule.tupleIndex
+                } else if jsonFieldSet.contains(lowerField) {
                     mode = "jsonKeys"
                 } else if scalarFieldSet.contains(lowerField) {
                     mode = "scalar"
                 } else if let inferred = Self.inferredRelationTarget(field),
                           wantedTokens.contains(Self.normalizeRelationToken(inferred)) {
                     mode = "scalar"
-                } else if ["id", "subid"].contains(lowerField),
+                } else if Self.isIdentifierField(field),
                           wantedTokens.contains(where: { target in
                               target.count >= 4 &&
                               sourcePrimaryToken.hasPrefix(target) &&
@@ -579,6 +598,14 @@ private final class DirectoryLoader {
                         matches =
                             wantedTokens.contains(Self.normalizeRelationToken(rowName ?? "")) &&
                             Self.comparableRelationValue(cellValue) == expected
+                    case "list":
+                        matches = Self.structuredRelationValues(in: cellValue, tupleIndex: nil).contains {
+                            Self.comparableRelationValue($0) == expected
+                        }
+                    case "tuple":
+                        matches = Self.structuredRelationValues(in: cellValue, tupleIndex: tupleIndex).contains {
+                            Self.comparableRelationValue($0) == expected
+                        }
                     default:
                         matches = Self.comparableRelationValue(cellValue) == expected
                     }
@@ -613,7 +640,7 @@ private final class DirectoryLoader {
         var totalCount = 0
 
         for workbook in payload.workbooks where workbook.error == nil && workbook.rows.count > 3 {
-            let headers = workbook.rows.count > 1 ? workbook.rows[1] : []
+            let headers = Self.fieldHeaders(for: workbook)
             let bookLabel = workbook.sheetCount > 1
                 ? "\(workbook.name) · \(workbook.sheetName)"
                 : workbook.name
@@ -669,6 +696,42 @@ private final class DirectoryLoader {
             isLoaded: false,
             error: workbook.error
         )
+    }
+
+    private static func fieldHeaders(for workbook: WorkbookView) -> [String] {
+        for headers in workbook.rows.prefix(3) {
+            if headers.contains(where: isIdentifierField) {
+                return headers
+            }
+        }
+        for index in 1..<min(3, workbook.rows.count) {
+            let values = workbook.rows[index].filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            if values.count >= 2, values.filter(looksLikeFieldType).count >= 2 {
+                return workbook.rows[index - 1]
+            }
+        }
+        if workbook.rows.count > 1 { return workbook.rows[1] }
+        return workbook.rows.first ?? []
+    }
+
+    private static func fieldName(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: "@").first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+    }
+
+    private static func isIdentifierField(_ value: String) -> Bool {
+        let raw = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let field = fieldName(raw)
+        return ["id", "subid"].contains(field) || raw.lowercased().hasSuffix("@id")
+    }
+
+    private static func looksLikeFieldType(_ value: String) -> Bool {
+        value.range(
+            of: #"^(?:repeated\s+)*(?:u?int(?:8|16|32|64)?|u?long|float|double|bool|boolean|string|json|[a-z][a-z0-9_]*enum|e[a-z][a-z0-9_]*)$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
     }
 
     private func excelURLs(in directory: URL) throws -> [URL] {
@@ -752,6 +815,52 @@ private final class DirectoryLoader {
             guard let keyRange = Range(match.range(at: 1), in: value) else { return nil }
             return String(value[keyRange])
         }
+    }
+
+    private static func ruleApplies(_ rule: RelationRule, sourceTokens: Set<String>) -> Bool {
+        rule.sources.isEmpty || rule.sources.contains { sourceTokens.contains(normalizeRelationToken($0)) }
+    }
+
+    private static func structuredRelationValues(in value: String, tupleIndex: Int?) -> [String] {
+        var values: [String] = []
+        if let data = value.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) {
+            visit(object, tupleIndex: tupleIndex, values: &values)
+        } else if let tupleIndex {
+            let expression = try? NSRegularExpression(pattern: #"\[[^\[\]]*\]"#)
+            let range = NSRange(value.startIndex..<value.endIndex, in: value)
+            expression?.matches(in: value, range: range).forEach { match in
+                guard let tupleRange = Range(match.range, in: value) else { return }
+                let parts = value[tupleRange].dropFirst().dropLast().split(separator: ",", omittingEmptySubsequences: false)
+                guard tupleIndex < parts.count else { return }
+                values.append(parts[tupleIndex].trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "\"'")))
+            }
+        } else if let expression = try? NSRegularExpression(pattern: #"-?\d+(?:\.\d+)?|[a-zA-Z_][\w.-]*"#) {
+            let range = NSRange(value.startIndex..<value.endIndex, in: value)
+            values = expression.matches(in: value, range: range).compactMap { match in
+                guard let valueRange = Range(match.range, in: value) else { return nil }
+                return String(value[valueRange])
+            }
+        }
+        return Array(Set(values.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }))
+    }
+
+    private static func visit(_ object: Any, tupleIndex: Int?, values: inout [String]) {
+        guard let array = object as? [Any] else { return }
+        let isTuple = !array.isEmpty && array.allSatisfy { !($0 is [Any]) && !($0 is [String: Any]) }
+        if isTuple, let tupleIndex, tupleIndex < array.count {
+            values.append(primitiveString(array[tupleIndex]))
+            return
+        }
+        for item in array {
+            if item is [Any] { visit(item, tupleIndex: tupleIndex, values: &values) }
+            else if tupleIndex == nil { values.append(primitiveString(item)) }
+        }
+    }
+
+    private static func primitiveString(_ value: Any) -> String {
+        if let value = value as? String { return value }
+        return String(describing: value)
     }
 }
 
@@ -1077,6 +1186,9 @@ private final class AppController: NSObject, NSApplicationDelegate, WKScriptMess
             ])
             return
         }
+        let relationRules = (body["relationRules"] as? [[String: Any]] ?? [])
+            .map(RelationRule.init(dictionary:))
+            .filter { !$0.fields.isEmpty }
         let directory = currentDirectory
         loaderQueue.async { [weak self] in
             guard let self else { return }
@@ -1086,7 +1198,8 @@ private final class AppController: NSObject, NSApplicationDelegate, WKScriptMess
                     value: value,
                     targetTokens: targetTokens,
                     scalarFields: scalarFields,
-                    jsonFields: jsonFields
+                    jsonFields: jsonFields,
+                    relationRules: relationRules
                 )
                 let response = ReverseReferenceResponse(
                     requestId: requestId,

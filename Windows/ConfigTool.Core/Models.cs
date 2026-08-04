@@ -58,6 +58,14 @@ public sealed class ReverseReferenceResponse
     public required List<ReverseReference> References { get; init; }
 }
 
+public sealed class RelationRule
+{
+    public List<string> Sources { get; init; } = [];
+    public List<string> Fields { get; init; } = [];
+    public string Mode { get; init; } = "scalar";
+    public int TupleIndex { get; init; }
+}
+
 public sealed class GlobalSearchMatch
 {
     public required string BookId { get; init; }

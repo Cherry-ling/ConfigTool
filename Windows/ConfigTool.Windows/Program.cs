@@ -213,7 +213,13 @@ internal sealed class ConfigToolForm : Form
         var directory = _currentDirectory;
         try
         {
-            var references = await Task.Run(() => _loader.FindReverseReferences(directory, value, ReadArray(request, "targetTokens"), ReadArray(request, "scalarFields"), ReadArray(request, "jsonFields")));
+            var references = await Task.Run(() => _loader.FindReverseReferences(
+                directory,
+                value,
+                ReadArray(request, "targetTokens"),
+                ReadArray(request, "scalarFields"),
+                ReadArray(request, "jsonFields"),
+                ReadRelationRules(request)));
             if (string.Equals(directory, _currentDirectory, StringComparison.Ordinal))
                 await SendAsync("receiveReverseReferences", new ReverseReferenceResponse { RequestId = requestId, Value = value, References = references });
         }
@@ -366,6 +372,21 @@ internal sealed class ConfigToolForm : Form
     private static string ReadString(JsonElement element, string property) => element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
     private static int ReadInt(JsonElement element, string property, int fallback) => element.TryGetProperty(property, out var value) && value.TryGetInt32(out var parsed) ? parsed : fallback;
     private static List<string> ReadArray(JsonElement element, string property) => element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.Array ? value.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String).Select(item => item.GetString() ?? "").ToList() : [];
+    private static List<RelationRule> ReadRelationRules(JsonElement element)
+    {
+        if (!element.TryGetProperty("relationRules", out var values) || values.ValueKind != JsonValueKind.Array) return [];
+        return values.EnumerateArray()
+            .Where(value => value.ValueKind == JsonValueKind.Object)
+            .Select(value => new RelationRule
+            {
+                Sources = ReadArray(value, "sources"),
+                Fields = ReadArray(value, "fields"),
+                Mode = ReadString(value, "mode"),
+                TupleIndex = ReadInt(value, "tupleIndex", 0)
+            })
+            .Where(rule => rule.Fields.Count > 0 && !string.IsNullOrWhiteSpace(rule.Mode))
+            .ToList();
+    }
 }
 
 internal static class Settings

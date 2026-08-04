@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PairPair ConfigTool</title>
-  <link rel="stylesheet" href="styles.css?v=2.0.0">
+  <link rel="stylesheet" href="styles.css?v=2.1.1">
 </head>
 <body>
   <div class="app-shell">
@@ -15,6 +15,9 @@
           <h1>ConfigTool</h1>
           <p>PAIRPAIR / READ ONLY</p>
         </div>
+        <button id="sidebarToggleButton" class="sidebar-toggle-button" type="button" title="收起侧边栏（⌘/Ctrl+\\）" aria-label="收起侧边栏">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M9 4v16M13 9l-3 3 3 3"/></svg>
+        </button>
       </div>
 
       <div class="sidebar-search">
@@ -56,6 +59,9 @@
     </aside>
 
     <main class="main">
+      <button id="sidebarRestoreButton" class="sidebar-restore-button" type="button" title="显示侧边栏（⌘/Ctrl+\\）" aria-label="显示侧边栏">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M9 4v16M11 9l3 3-3 3"/></svg>
+      </button>
       <header class="topbar">
         <div class="title-block">
           <div class="eyebrow"><span id="categoryLabel">配置浏览</span><span>/</span><span id="sheetLabel">—</span></div>
@@ -258,7 +264,7 @@
     </div>
     <div id="reverseReferenceList" class="reverse-reference-list"></div>
   </div>
-  <script src="relationships.js?v=2.0.0"></script>
-  <script src="app.js?v=2.0.0"></script>
+  <script src="relationships.js?v=2.1.0"></script>
+  <script src="app.js?v=2.1.0"></script>
 </body>
 </html>

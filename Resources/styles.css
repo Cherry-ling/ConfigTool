@@ -15,6 +15,7 @@
   --purple: #b891ff;
   --pink: #ff7da8;
   --sidebar-width: 286px;
+  --window-controls-safe-top: 42px;
 }
 
 * { box-sizing: border-box; }
@@ -43,6 +44,10 @@ button { color: inherit; }
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   width: 100%;
   height: 100%;
+  transition: grid-template-columns .2s ease;
+}
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
 }
 
 .sidebar {
@@ -52,11 +57,20 @@ button { color: inherit; }
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  padding: 42px 14px 14px;
+  padding: var(--window-controls-safe-top) 14px 14px;
   background:
     radial-gradient(circle at 15% 3%, rgba(121, 201, 67, .12), transparent 24%),
     #f8fafb;
   border-right: 1px solid var(--line);
+  opacity: 1;
+  transition: opacity .14s ease, padding .2s ease, border-color .2s ease;
+}
+.app-shell.sidebar-collapsed .sidebar {
+  padding-right: 0;
+  padding-left: 0;
+  border-color: transparent;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .brand {
@@ -84,6 +98,30 @@ button { color: inherit; }
 .brand-mark span { border-radius: 2px; background: #ffffff; }
 .brand h1 { margin: 0; font-size: 17px; letter-spacing: -.02em; }
 .brand p { margin: 3px 0 0; color: #657288; font-size: 9px; font-weight: 650; letter-spacing: .14em; }
+.sidebar-toggle-button, .sidebar-restore-button {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid #d4dbe4;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .78);
+  color: #59677b;
+  cursor: default;
+}
+.sidebar-toggle-button { margin-left: auto; }
+.sidebar-toggle-button:hover, .sidebar-restore-button:hover { border-color: #aab7c8; background: #ffffff; color: #24344a; }
+.sidebar-toggle-button svg, .sidebar-restore-button svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
 
 .sidebar-search, .global-search {
   display: flex;
@@ -321,6 +359,7 @@ button { color: inherit; }
 .status-dot.error { background: #ff6b6b; }
 
 .main {
+  position: relative;
   display: grid;
   grid-template-rows: 105px 64px minmax(0, 1fr);
   min-width: 0;
@@ -329,6 +368,18 @@ button { color: inherit; }
     radial-gradient(circle at 90% 0, rgba(108, 168, 255, .07), transparent 30%),
     var(--bg);
 }
+.sidebar-restore-button {
+  position: absolute;
+  z-index: 20;
+  /* Match the sidebar brand button and clear macOS window controls. */
+  top: var(--window-controls-safe-top);
+  left: 14px;
+  display: none;
+  background: rgba(255, 255, 255, .9);
+  box-shadow: 0 2px 8px rgba(29, 45, 67, .08);
+}
+.app-shell.sidebar-collapsed .sidebar-restore-button { display: inline-grid; }
+.app-shell.sidebar-collapsed .topbar { padding-left: 58px; }
 
 .topbar {
   min-width: 0;
