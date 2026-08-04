@@ -12,7 +12,7 @@ if (args.Length == 1 && args[0] == "--self-test")
 
 if (args.Length < 2)
 {
-    Console.Error.WriteLine("用法：ConfigTool.Cli --self-test | --audit <配置目录> | --global-search-audit <配置目录> <关键词> | --git-audit <配置目录>");
+    Console.Error.WriteLine("用法：ConfigTool.Cli --self-test | --audit <配置目录> | --reverse-audit <配置目录> <值> <目标表> <标量字段[,字段]> [JSON字段[,字段]] | --global-search-audit <配置目录> <关键词> | --git-audit <配置目录>");
     return 1;
 }
 
@@ -43,6 +43,27 @@ try
             }, JsonDefaults.Options));
             return 0;
         }
+        case "--reverse-audit" when args.Length >= 5:
+        {
+            var scalarFields = args[4].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+            var jsonFields = args.Length >= 6
+                ? args[5].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList()
+                : [];
+            var references = loader.FindReverseReferences(
+                args[1],
+                args[2],
+                [args[3]],
+                scalarFields,
+                jsonFields
+            );
+            Console.WriteLine(JsonSerializer.Serialize(new ReverseReferenceResponse
+            {
+                RequestId = 0,
+                Value = args[2],
+                References = references
+            }, JsonDefaults.Options));
+            return 0;
+        }
         case "--git-audit" when args.Length >= 2:
         {
             var status = new GitRepositoryService().Inspect(args[1]);
@@ -50,7 +71,7 @@ try
             return status.IsRepository ? 0 : 2;
         }
         default:
-            Console.Error.WriteLine("参数无效。可用：--audit、--global-search-audit、--git-audit");
+            Console.Error.WriteLine("参数无效。可用：--audit、--reverse-audit、--global-search-audit、--git-audit");
             return 1;
     }
 }
@@ -86,6 +107,15 @@ static int RunSelfTest()
         var excel = initial.Workbooks.Single(book => book.SourceKind == "xlsx");
         Assert(lua.Rows[3][2] == "before", "Lua 读取值不正确");
         Assert(excel.Rows[3][1] == "before", "Excel 读取值不正确");
+        var numericReverse = loader.FindReverseReferences(
+            directory,
+            "42",
+            ["Target"],
+            [],
+            [],
+            [new RelationRule { Sources = ["Activity"], Fields = ["Value"], Mode = "scalar" }]
+        );
+        Assert(numericReverse.Count == 1 && numericReverse[0].CellValue == "42.0", "Excel 小数格式 ID 的反向索引不正确");
 
         var saver = new ConfigFileSaver();
         saver.Save(directory, lua.Id, lua.SourceSignature, [new CellChange { Row = 3, Column = 2, Value = "after" }]);
@@ -207,7 +237,7 @@ static void CreateWorkbook(string path)
             <row r="1"><c r="A1" t="inlineStr"><is><t>说明</t></is></c><c r="B1" t="inlineStr"><is><t>说明</t></is></c><c r="C1" t="inlineStr"><is><t>说明</t></is></c></row>
             <row r="2"><c r="A2" t="inlineStr"><is><t>ID</t></is></c><c r="B2" t="inlineStr"><is><t>Name</t></is></c><c r="C2" t="inlineStr"><is><t>Value</t></is></c></row>
             <row r="3"><c r="A3" t="inlineStr"><is><t>int</t></is></c><c r="B3" t="inlineStr"><is><t>string</t></is></c><c r="C3" t="inlineStr"><is><t>int</t></is></c></row>
-            <row r="4"><c r="A4"><v>101</v></c><c r="B4" t="inlineStr"><is><t>before</t></is></c><c r="C4"><v>42</v></c></row>
+            <row r="4"><c r="A4"><v>101</v></c><c r="B4" t="inlineStr"><is><t>before</t></is></c><c r="C4"><v>42.0</v></c></row>
           </sheetData>
         </worksheet>
         """);

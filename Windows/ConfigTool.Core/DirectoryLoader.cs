@@ -315,7 +315,10 @@ public sealed class DirectoryLoader
     {
         var text = value.Trim();
         return !string.IsNullOrEmpty(text) && decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out var decimalValue)
-            ? decimalValue.ToString(CultureInfo.InvariantCulture)
+            // Excel numeric cells often arrive as `901005.0`, while relation
+            // cells and user clicks use `901005`. G29 removes only insignificant
+            // trailing zeroes and keeps meaningful decimal precision.
+            ? decimalValue.ToString("G29", CultureInfo.InvariantCulture)
             : text;
     }
 
