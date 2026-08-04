@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PairPair ConfigTool</title>
+  <link rel="stylesheet" href="styles.css?v=2.1.1">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark"><span></span><span></span><span></span><span></span></div>
+        <div>
+          <h1>ConfigTool</h1>
+          <p>PAIRPAIR / READ ONLY</p>
+        </div>
+        <button id="sidebarToggleButton" class="sidebar-toggle-button" type="button" title="收起侧边栏（⌘/Ctrl+\\）" aria-label="收起侧边栏">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M9 4v16M13 9l-3 3 3 3"/></svg>
+        </button>
+      </div>
+
+      <div class="sidebar-search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m2.35-5.15a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg>
+        <input id="tableSearch" type="search" placeholder="查找配置表">
+        <kbd>⌘K</kbd>
+      </div>
+
+      <div class="navigation-summary">
+        <span>全部配置</span>
+        <strong id="navigationSummary">等待读取…</strong>
+      </div>
+
+      <nav id="tableNavigation" class="table-navigation"></nav>
+
+      <div class="sidebar-footer">
+        <button id="gitProjectButton" class="git-project-card" type="button" title="查看当前配置目录所属 Git 项目">
+          <span class="git-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><path d="M6 8.2v7.6M8.2 6h7.6"/></svg>
+          </span>
+          <span class="git-card-copy">
+            <strong>Git 项目</strong>
+            <small id="gitProjectSummary">正在识别当前目录…</small>
+          </span>
+          <span id="gitProjectState" class="git-card-state">检测中</span>
+        </button>
+        <button id="revealButton" class="folder-card">
+          <span class="folder-icon">⌘</span>
+          <span>
+            <strong>配置目录</strong>
+            <small id="folderPath">等待读取…</small>
+          </span>
+        </button>
+        <div class="connection-state">
+          <span id="statusDot" class="status-dot"></span>
+          <span id="statusText">正在准备</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <button id="sidebarRestoreButton" class="sidebar-restore-button" type="button" title="显示侧边栏（⌘/Ctrl+\\）" aria-label="显示侧边栏">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M9 4v16M11 9l3 3-3 3"/></svg>
+      </button>
+      <header class="topbar">
+        <div class="title-block">
+          <div class="eyebrow"><span id="categoryLabel">配置浏览</span><span>/</span><span id="sheetLabel">—</span></div>
+          <h2 id="workbookTitle">选择一张配置表</h2>
+        </div>
+
+        <div class="toolbar">
+          <div class="relation-history-controls">
+            <button id="relationBackButton" class="icon-button relation-history-button" title="返回跳转前的位置（⌘[）" disabled>←</button>
+            <button id="relationForwardButton" class="icon-button relation-history-button" title="前进（⌘]）" disabled>→</button>
+          </div>
+          <div class="table-search-controls">
+            <div class="search-scope-switch" role="group" aria-label="搜索范围">
+              <button id="currentSearchScopeButton" class="active" type="button">当前</button>
+              <button id="globalSearchScopeButton" type="button">全局</button>
+            </div>
+            <label class="global-search">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m2.35-5.15a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg>
+              <input id="globalSearch" type="search" placeholder="在当前表中查找 ID 或内容">
+              <span id="matchCount"></span>
+            </label>
+            <div class="search-nav-column">
+              <button id="previousMatchButton" class="match-nav-button" title="上一个（Shift+回车）" disabled>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg>
+              </button>
+              <button id="nextMatchButton" class="match-nav-button" title="下一个（回车）" disabled>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6"/></svg>
+              </button>
+            </div>
+          </div>
+          <button id="refreshButton" class="icon-button" title="刷新">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5m9.2-4A7.5 7.5 0 0 0 5.7 6.7L4 8m16 8-1.7 1.3A7.5 7.5 0 0 1 5.8 15"/></svg>
+          </button>
+          <button id="pullCodeButton" class="primary-button git-pull-button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 20h14"/></svg>
+            <span>拉取代码</span>
+          </button>
+          <button id="cleanChangesButton" class="secondary-button git-clean-button" disabled>清理改动</button>
+          <button id="editButton" class="secondary-button">编辑</button>
+          <button id="saveButton" class="primary-button" disabled>保存</button>
+          <div class="preset-control">
+            <button id="presetButton" class="secondary-button preset-button">目录预设 <span>⌄</span></button>
+            <div id="presetMenu" class="preset-menu hidden">
+              <div id="presetMenuList"></div>
+              <div class="preset-menu-separator"></div>
+              <button id="saveCurrentPresetButton" class="preset-menu-action">＋ 保存当前目录为预设</button>
+              <button id="managePresetsButton" class="preset-menu-action">管理预设…</button>
+              <button id="chooseButton" class="preset-menu-action">选择其他目录…</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section class="stats-strip">
+        <div class="stat"><span>文件 / Sheet</span><strong id="statWorkbook">—</strong></div>
+        <div class="stat"><span>数据行</span><strong id="statRows">—</strong></div>
+        <div class="stat"><span>字段列</span><strong id="statColumns">—</strong></div>
+        <div class="stat stat-wide"><span>文件更新</span><strong id="statModified">—</strong></div>
+        <div class="relation-hint">
+          <kbd>⌘/Ctrl</kbd><span>正向跳转</span>
+          <kbd>⌥/Alt</kbd><span>反向引用</span>
+        </div>
+        <div id="modePill" class="read-only-pill"><span>●</span> 只读模式</div>
+      </section>
+
+      <section class="content-panel">
+        <div id="emptyState" class="empty-state">
+          <div class="empty-art"><span></span><span></span><span></span></div>
+          <h3>正在读取配置表</h3>
+          <p>正在解析本地 Excel 或 Lua 配置，之后只刷新有变化的文件。</p>
+        </div>
+
+        <div id="errorState" class="error-state hidden">
+          <strong>读取失败</strong>
+          <p id="errorMessage"></p>
+          <button id="errorChooseButton" class="primary-button">重新选择目录</button>
+        </div>
+
+        <div id="tableViewport" class="table-viewport hidden">
+          <table id="configTable" class="config-table"></table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="presetModal" class="modal-backdrop hidden">
+    <div class="preset-modal" role="dialog" aria-modal="true" aria-labelledby="presetModalTitle">
+      <div class="preset-modal-header">
+        <div>
+          <h3 id="presetModalTitle">管理目录预设</h3>
+          <p>预设只保存在本机，不会写入项目。</p>
+        </div>
+        <button id="closePresetModalButton" class="modal-close-button">×</button>
+      </div>
+      <label class="follow-last-option">
+        <input id="followLastPresetRadio" type="radio" name="defaultPreset" value="">
+        <span>启动时跟随上次使用的目录</span>
+      </label>
+      <div id="presetEditorList" class="preset-editor-list"></div>
+      <div class="preset-modal-footer">
+        <button id="addCurrentPresetButton" class="secondary-button">＋ 添加当前目录</button>
+        <span class="modal-spacer"></span>
+        <button id="cancelPresetChangesButton" class="secondary-button">取消</button>
+        <button id="savePresetChangesButton" class="primary-button">保存预设</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="gitCleanModal" class="modal-backdrop hidden">
+    <div class="git-clean-modal" role="dialog" aria-modal="true" aria-labelledby="gitCleanModalTitle">
+      <div class="preset-modal-header">
+        <div>
+          <h3 id="gitCleanModalTitle">清理本地改动</h3>
+          <p>将恢复已跟踪文件到当前 HEAD；此操作不可撤销。</p>
+        </div>
+        <button id="closeGitCleanModalButton" class="modal-close-button" title="关闭">×</button>
+      </div>
+      <div class="git-clean-content">
+        <div id="gitCleanSummary" class="git-clean-summary"></div>
+        <section class="git-clean-section">
+          <div class="git-clean-section-header">
+            <strong>已跟踪改动</strong>
+            <label class="git-clean-select-all">
+              <input id="selectAllTrackedCheckbox" type="checkbox">
+              <span>全选</span>
+            </label>
+          </div>
+          <div id="gitCleanTrackedList" class="git-clean-file-list"></div>
+        </section>
+        <section class="git-clean-section">
+          <label id="deleteUntrackedOption" class="git-clean-option">
+            <input id="deleteUntrackedCheckbox" type="checkbox">
+            <span>
+              <strong>选择全部未跟踪的文件和目录</strong>
+              <small id="deleteUntrackedDescription">也可以只勾选下方个别项目；不会删除被 Git 忽略的文件。</small>
+            </span>
+          </label>
+          <div id="gitCleanUntrackedList" class="git-clean-file-list git-clean-untracked"></div>
+        </section>
+      </div>
+      <div class="preset-modal-footer git-clean-footer">
+        <span class="modal-spacer"></span>
+        <button id="cancelGitCleanButton" class="secondary-button">取消</button>
+        <button id="confirmGitCleanButton" class="danger-button" disabled>恢复本地改动</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <div id="gitFailureModal" class="modal-backdrop hidden">
+    <div class="git-failure-modal" role="alertdialog" aria-modal="true" aria-labelledby="gitFailureModalTitle">
+      <div class="preset-modal-header">
+        <div>
+          <h3 id="gitFailureModalTitle">拉取代码失败</h3>
+          <p>当前代码未被工具修改。</p>
+        </div>
+        <button id="closeGitFailureModalButton" class="modal-close-button" title="关闭">×</button>
+      </div>
+      <pre id="gitFailureMessage" class="git-failure-message"></pre>
+      <div class="preset-modal-footer git-failure-footer">
+        <span class="modal-spacer"></span>
+        <button id="acknowledgeGitFailureButton" class="primary-button">知道了</button>
+      </div>
+    </div>
+  </div>
+  <div id="gitProjectPanel" class="git-project-panel hidden" role="dialog" aria-label="Git 项目详情">
+    <div class="git-project-panel-header">
+      <div><strong>Git 项目</strong><small id="gitProjectDetailState">正在识别…</small></div>
+      <button id="closeGitProjectPanelButton" title="关闭">×</button>
+    </div>
+    <p id="gitProjectDetailMessage" class="git-project-message"></p>
+    <dl class="git-project-meta">
+      <div><dt>仓库根目录</dt><dd id="gitRepositoryRoot">—</dd></div>
+      <div><dt>远程地址</dt><dd id="gitRemoteUrl">—</dd></div>
+      <div><dt>当前分支</dt><dd id="gitBranch">—</dd></div>
+      <div><dt>本地状态</dt><dd id="gitWorkingTree">—</dd></div>
+    </dl>
+  </div>
+  <div id="relationChooser" class="relation-chooser hidden">
+    <div class="relation-chooser-title">选择要跳转的配置</div>
+    <div id="relationChooserList"></div>
+  </div>
+  <div id="globalSearchPanel" class="global-search-panel hidden">
+    <div class="global-search-panel-header">
+      <div>
+        <strong>全局搜索结果</strong>
+        <small id="globalSearchSummary"></small>
+      </div>
+      <button id="closeGlobalSearchButton" title="关闭">×</button>
+    </div>
+    <div id="globalSearchResultList" class="global-search-result-list"></div>
+  </div>
+  <div id="reverseReferencePanel" class="reverse-reference-panel hidden">
+    <div class="reverse-reference-header">
+      <div>
+        <strong id="reverseReferenceTitle">反向引用</strong>
+        <small id="reverseReferenceSummary"></small>
+      </div>
+      <button id="closeReverseReferenceButton" title="关闭">×</button>
+    </div>
+    <div id="reverseReferenceList" class="reverse-reference-list"></div>
+  </div>
+  <script src="relationships.js?v=2.1.0"></script>
+  <script src="app.js?v=2.1.0"></script>
+</body>
+</html>

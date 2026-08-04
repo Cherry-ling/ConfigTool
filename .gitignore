@@ -4,11 +4,10 @@
 # Local browser automation artifacts
 .playwright-cli/
 
-# Rebuildable application bundle
-PairPair ConfigTool.app/
-PairPair ConfigTool.exe
+# Root application artifacts are versioned so a full project checkout runs on
+# either supported desktop platform without a separate download.
 
-# .NET build outputs and local Windows releases
+# .NET build outputs and optional release archives
 Windows/**/bin/
 Windows/**/obj/
 dist/
