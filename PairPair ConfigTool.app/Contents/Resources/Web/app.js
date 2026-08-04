@@ -513,7 +513,7 @@
       showToast("当前目录已经存在于预设中");
       return;
     }
-    const folderName = path.split("/").filter(Boolean).pop() || "配置目录";
+    const folderName = path.split(/[\\/]+/).filter(Boolean).pop() || "配置目录";
     state.draftPresets.push({
       id: `preset-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       name: folderName,
@@ -563,14 +563,33 @@
     renderPresetEditor();
   }
 
+  function normalizePresetPath(value) {
+    const path = String(value || "").trim();
+    // Keep filesystem roots intact, while normalizing ordinary trailing separators.
+    if (/^[a-z]:[\\/]$/i.test(path) || path === "/") return path;
+    return path.replace(/[\\/]+$/, "");
+  }
+
+  function isAbsolutePresetPath(value) {
+    const path = String(value || "").trim();
+    return path.startsWith("/") ||
+      /^[a-z]:[\\/]/i.test(path) ||
+      /^\\\\[^\\/]+[\\/][^\\/]+(?:[\\/]|$)/.test(path) ||
+      /^\\\\\?\\[a-z]:[\\/]/i.test(path);
+  }
+
   function savePresetChanges() {
     const normalized = state.draftPresets.map((preset) => ({
       ...preset,
       name: preset.name.trim(),
-      path: preset.path.trim().replace(/\/+$/, "")
+      path: normalizePresetPath(preset.path)
     }));
-    if (normalized.some((preset) => !preset.name || !preset.path.startsWith("/"))) {
-      showToast("预设名称不能为空，路径必须是绝对路径");
+    if (normalized.some((preset) => !preset.name)) {
+      showToast("预设名称不能为空");
+      return;
+    }
+    if (normalized.some((preset) => !isAbsolutePresetPath(preset.path))) {
+      showToast("预设路径必须是绝对路径，例如 E:\\项目\\配置 或 /Users/…");
       return;
     }
     const duplicatePath = normalized.some((preset, index) =>
@@ -1854,6 +1873,14 @@
         const value = String(row[columnIndex] ?? "");
         const displayValue = displayCellValue(book, columnIndex, value);
         const td = document.createElement("td");
+        let modifierMouseDownAt = Number.NEGATIVE_INFINITY;
+        const consumeModifierClick = (event) => {
+          if (event.timeStamp - modifierMouseDownAt > 750) return false;
+          modifierMouseDownAt = Number.NEGATIVE_INFINITY;
+          event.preventDefault();
+          event.stopPropagation();
+          return true;
+        };
         td.textContent = displayValue;
         td.title = displayValue;
         td.dataset.row = String(rowIndex);
@@ -1894,18 +1921,32 @@
           if (destinations.length) {
             td.classList.add("relation-cell");
             td.addEventListener("mousedown", (event) => {
-              if (event.metaKey || event.ctrlKey) event.preventDefault();
+              // WebView2 can drop Ctrl/Alt state before the following click event.
+              // Handle the gesture at mousedown so Windows and macOS behave alike.
+              if (event.altKey || !(event.metaKey || event.ctrlKey)) return;
+              modifierMouseDownAt = event.timeStamp;
+              void handleRelationClick(event, book, rowIndex, columnIndex, td.innerText, relationRule);
             });
             td.addEventListener("click", (event) => {
+              if (consumeModifierClick(event)) return;
               handleRelationClick(event, book, rowIndex, columnIndex, td.innerText, relationRule);
             });
           }
           if (metadata.identifierColumns[columnIndex]) {
             td.classList.add("reverse-reference-cell");
             td.addEventListener("mousedown", (event) => {
-              if (event.altKey) event.preventDefault();
+              if (!event.altKey) return;
+              modifierMouseDownAt = event.timeStamp;
+              handleReverseReferenceClick(
+                event,
+                book,
+                rowIndex,
+                columnIndex,
+                td.innerText
+              );
             });
             td.addEventListener("click", (event) => {
+              if (consumeModifierClick(event)) return;
               handleReverseReferenceClick(
                 event,
                 book,
