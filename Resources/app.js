@@ -1614,7 +1614,10 @@
     const hierarchyRule = hierarchyRuleForField(sourceBook, field);
     if (hierarchyRule?.bookIds?.includes(targetBook.id)) return true;
 
-    const relationRule = relationRuleForColumn(sourceBook, Number(reference.column));
+    // Native reverse-lookup results include the source field. The source workbook
+    // may still be a summary (without rows/headers) when the response arrives, so
+    // resolving by its column would incorrectly discard an otherwise valid result.
+    const relationRule = relationRuleForField(sourceBook, field);
     if (!relationRule) return false;
     const targets = relationRule.bookIds
       ? state.payload.workbooks.filter((book) => relationRule.bookIds.includes(book.id))
