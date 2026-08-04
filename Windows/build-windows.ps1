@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 $windowsRoot = Split-Path -Parent $PSCommandPath
 $projectRoot = Split-Path -Parent $windowsRoot
 $project = Join-Path $windowsRoot "ConfigTool.Windows/ConfigTool.Windows.csproj"
-$output = Join-Path $projectRoot "dist/windows/$Runtime"
+$output = Join-Path ([System.IO.Path]::GetTempPath()) "PairPair-ConfigTool-$Runtime-$([Guid]::NewGuid().ToString('N'))"
 $executable = Join-Path $projectRoot "PairPair ConfigTool.exe"
 
 dotnet publish $project `
