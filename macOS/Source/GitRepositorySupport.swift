@@ -348,21 +348,25 @@ final class GitRepositoryService {
             return GitCommandResult(started: false, success: false, stdout: "", stderr: "未找到 Git 命令。")
         }
         let process = Process()
-        let stdout = Pipe()
-        let stderr = Pipe()
+        let output = Pipe()
         process.executableURL = URL(fileURLWithPath: executablePath)
         process.currentDirectoryURL = directory
         process.arguments = arguments
-        process.standardOutput = stdout
-        process.standardError = stderr
+        // Git status can exceed a pipe buffer after a branch switch. Drain the
+        // combined stream while the process runs; waiting first deadlocks once
+        // Git has filled stdout and cannot exit.
+        process.standardOutput = output
+        process.standardError = output
         do {
             try process.run()
+            let outputData = output.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
+            let outputText = String(data: outputData, encoding: .utf8) ?? ""
             return GitCommandResult(
                 started: true,
                 success: process.terminationStatus == 0,
-                stdout: String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "",
-                stderr: String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                stdout: outputText,
+                stderr: ""
             )
         } catch {
             return GitCommandResult(started: false, success: false, stdout: "", stderr: error.localizedDescription)
