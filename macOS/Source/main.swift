@@ -914,6 +914,9 @@ private final class AppController: NSObject, NSApplicationDelegate, WKScriptMess
     private var currentSignature = ""
     private var reloadWorkItem: DispatchWorkItem?
     private var refreshGeneration = 0
+    private var refreshInProgress = false
+    private var refreshQueued = false
+    private var queuedRefreshForce = false
 
     override init() {
         let savedPath = UserDefaults.standard.string(forKey: "ConfigDirectory") ?? defaultConfigPath
@@ -1351,8 +1354,14 @@ private final class AppController: NSObject, NSApplicationDelegate, WKScriptMess
             sendJavaScript(function: "receiveError", object: ["message": "配置目录不存在，请重新选择目录。"])
             return
         }
+        if refreshInProgress {
+            refreshQueued = true
+            queuedRefreshForce = queuedRefreshForce || force
+            return
+        }
         let signature = loader.signature(for: currentDirectory)
         if !force && signature == currentSignature { return }
+        refreshInProgress = true
         refreshGeneration += 1
         let generation = refreshGeneration
         let directory = currentDirectory
@@ -1366,21 +1375,37 @@ private final class AppController: NSObject, NSApplicationDelegate, WKScriptMess
                 let data = try JSONEncoder().encode(payload)
                 let object = try JSONSerialization.jsonObject(with: data)
                 DispatchQueue.main.async {
-                    guard generation == self.refreshGeneration,
-                          directory == self.currentDirectory else { return }
-                    self.currentSignature = signature
-                    self.sendJavaScript(function: "receiveData", object: object)
-                    self.sendCodableJavaScript(function: "receiveGitStatus", value: gitStatus)
-                    self.monitor.watch(path: directory.path) { [weak self] in self?.scheduleRefresh() }
+                    if generation == self.refreshGeneration,
+                       directory == self.currentDirectory {
+                        self.currentSignature = signature
+                        self.sendJavaScript(function: "receiveData", object: object)
+                        self.sendCodableJavaScript(function: "receiveGitStatus", value: gitStatus)
+                        self.monitor.watch(path: directory.path) { [weak self] in self?.scheduleRefresh() }
+                    }
+                    self.completeRefresh()
                 }
             } catch {
                 DispatchQueue.main.async {
-                    guard generation == self.refreshGeneration,
-                          directory == self.currentDirectory else { return }
-                    self.sendJavaScript(function: "receiveError", object: ["message": error.localizedDescription])
+                    if generation == self.refreshGeneration,
+                       directory == self.currentDirectory {
+                        self.sendJavaScript(function: "receiveError", object: ["message": error.localizedDescription])
+                    }
+                    self.completeRefresh()
                 }
             }
         }
+    }
+
+    private func completeRefresh() {
+        refreshInProgress = false
+        // A refresh invalidated by a branch checkout may not send receiveData or
+        // receiveError. Always settle the UI before optionally starting the latest one.
+        sendJavaScript(function: "setLoading", object: ["loading": false])
+        guard refreshQueued else { return }
+        let force = queuedRefreshForce
+        refreshQueued = false
+        queuedRefreshForce = false
+        refresh(force: force)
     }
 
     private func sendJavaScript(function: String, object: Any) {

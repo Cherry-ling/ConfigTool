@@ -34,6 +34,9 @@ internal sealed class ConfigToolForm : Form
     private string _currentDirectory;
     private string _currentSignature = "";
     private int _refreshGeneration;
+    private bool _refreshInProgress;
+    private bool _refreshQueued;
+    private bool _queuedRefreshForce;
     private bool _pageLoaded;
 
     public ConfigToolForm()
@@ -143,8 +146,15 @@ internal sealed class ConfigToolForm : Form
             await SendAsync("receiveError", new { message = "尚未选择配置目录，请选择包含 .xlsx 或 .lua 配置的目录。" });
             return;
         }
+        if (_refreshInProgress)
+        {
+            _refreshQueued = true;
+            _queuedRefreshForce |= force;
+            return;
+        }
         var signature = _loader.SignatureForDirectory(_currentDirectory);
         if (!force && signature == _currentSignature) return;
+        _refreshInProgress = true;
         var generation = ++_refreshGeneration;
         var directory = _currentDirectory;
         await SendAsync("setLoading", new { loading = true });
@@ -161,6 +171,20 @@ internal sealed class ConfigToolForm : Form
         {
             if (generation == _refreshGeneration && string.Equals(directory, _currentDirectory, StringComparison.Ordinal))
                 await SendAsync("receiveError", new { message = error.Message });
+        }
+        finally
+        {
+            _refreshInProgress = false;
+            // A stale refresh can be discarded after a branch switch, so settle
+            // the UI even when neither receiveData nor receiveError was sent.
+            await SendAsync("setLoading", new { loading = false });
+            if (_refreshQueued)
+            {
+                var queuedForce = _queuedRefreshForce;
+                _refreshQueued = false;
+                _queuedRefreshForce = false;
+                _ = RefreshAsync(queuedForce);
+            }
         }
     }
 
