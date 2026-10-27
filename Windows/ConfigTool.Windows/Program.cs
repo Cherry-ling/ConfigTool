@@ -143,7 +143,7 @@ internal sealed class ConfigToolForm : Form
     {
         if (string.IsNullOrWhiteSpace(_currentDirectory) || !Directory.Exists(_currentDirectory))
         {
-            await SendAsync("receiveError", new { message = "尚未选择配置目录，请选择包含 .xlsx 或 .lua 配置的目录。" });
+            await SendAsync("receiveError", new { message = "尚未选择配置目录，请选择包含 .xlsx、.lua 或 .json 配置的目录。" });
             return;
         }
         if (_refreshInProgress)
@@ -335,7 +335,7 @@ internal sealed class ConfigToolForm : Form
     {
         using var dialog = new FolderBrowserDialog
         {
-            Description = "选择包含 .xlsx 或 .lua 配置的目录",
+            Description = "选择包含 .xlsx、.lua 或 .json 配置的目录",
             UseDescriptionForTitle = true,
             InitialDirectory = Directory.Exists(_currentDirectory) ? _currentDirectory : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
         };

@@ -2,6 +2,31 @@
 // field convention, or provide sheet names when the same field means different
 // things in different configuration domains.
 window.CONFIG_RELATION_RULES = [
+  // BusyBits rawdata. Relations below follow the runtime loaders, not matching
+  // numbers: e.g. DailyMissionItem.reward is score, not a Goods foreign key.
+  { sources: ["AdAudienceConf", "AdInterPointConf", "AdRewardPointConf"], fields: ["policy_id"], targets: ["AdPolicyConf"], targetKey: "id", mode: "scalar", label: "广告策略" },
+  { sources: ["ActivityCatalogConf"], fields: ["id"], targets: ["ActivityConf"], targetKey: "id", mode: "scalar", label: "活动排期" },
+  { sources: ["DailyMissionConf", "DiscoPassConf", "MilestoneConf"], fields: ["activity_type"], targets: ["ActivityConf"], targetKey: "id", mode: "scalar", label: "活动排期" },
+  { sources: ["WeeklyContestConf"], fields: ["type"], targets: ["ActivityConf"], targetKey: "id", mode: "scalar", label: "活动排期" },
+  { sources: ["DailyMissionConf"], fields: ["stages"], targets: ["DailyMissionItemConf"], targetKey: "id", mode: "list", label: "每日任务项" },
+  { sources: ["DailyMissionItemConf"], fields: ["type"], targets: ["DailyMissionActionConf"], targetKey: "type", mode: "scalar", label: "任务行为" },
+  { sources: ["MilestoneConf"], fields: ["target_type"], targets: ["MilestoneTypeConf"], targetKey: "target_type", mode: "scalar", label: "里程碑计分类型" },
+  { sources: ["MilestoneConf"], fields: ["target_id"], targets: ["GoodsConf"], targetKey: "id", mode: "scalar", label: "收集物品" },
+  { sources: ["SpeedBoosterConf"], fields: ["goods_id"], targets: ["GoodsConf"], targetKey: "id", mode: "scalar", label: "加速物品" },
+  { sources: ["ShopRecommendConf"], fields: ["newbie_package_key"], targets: ["ShopConf"], targetKey: "id", mode: "scalar", label: "新手礼包" },
+  { sources: ["WeeklyContestConf", "MasterLeagueRewardConf", "TournamentConf"], fields: ["reward_icon"], targets: ["GoodsConf"], targetKey: "id", mode: "scalar", label: "奖励物品图标" },
+  { sources: ["ActivityConf", "GoodsConf", "ProfileStatsConf"], fields: ["name", "desc"], targets: ["LangConf"], targetKey: "key", mode: "scalar", label: "多语言" },
+  { sources: ["DailyMissionActionConf"], fields: ["lang_key"], targets: ["LangConf"], targetKey: "key", mode: "scalar", label: "多语言" },
+  { sources: ["PinataRewardConf"], fields: ["desc"], targets: ["LangConf"], targetKey: "key", mode: "scalar", label: "多语言" },
+  { sources: ["ShopConf"], fields: ["name", "tip"], targets: ["LangConf"], targetKey: "key", mode: "scalar", label: "多语言" },
+  { sources: ["ProfilePortraitConf"], fields: ["unlock_desc"], targets: ["LangConf"], targetKey: "key", mode: "scalar", label: "多语言" },
+  { sources: ["AdRewardPointConf", "JourneyRewardConf", "MasterLeagueRewardConf", "MilestoneConf", "WeeklyContestConf"], fields: ["reward"], targets: ["GoodsConf"], targetKey: "key", mode: "rewardKeys", label: "奖励物品" },
+  { sources: ["DailyMissionConf", "PinataRewardConf", "TournamentConf"], fields: ["rewards"], targets: ["GoodsConf"], targetKey: "key", mode: "rewardKeys", label: "奖励物品" },
+  { sources: ["DiscoPassConf"], fields: ["free_rewards", "plus_rewards"], targets: ["GoodsConf"], targetKey: "key", mode: "rewardKeys", label: "奖励物品" },
+  { sources: ["ShopConf"], fields: ["details01", "details02", "details03", "details04"], targets: ["GoodsConf"], targetKey: "key", mode: "rewardKeys", label: "礼包物品" },
+  { sources: ["CarFeverStageConf"], fields: ["reward_details02"], targets: ["GoodsConf"], targetKey: "key", mode: "rewardKeys", label: "奖励物品" },
+  { sources: ["MiscConf"], fields: ["CarfeverLiveTime"], targets: ["GoodsConf"], targetKey: "key", mode: "rewardKeys", label: "奖励物品" },
+  { sources: ["JourneyRewardConf"], fields: ["reward"], targets: ["JourneyBackgroundConf"], targetKey: "id", mode: "journeyBackgroundIds", label: "旅程背景" },
   // FFM album: verified from AlbumData.lua, AlbumSetUI.lua and RewardApplier.lua.
   {
     sources: ["Album", "AlbumB"],

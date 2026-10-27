@@ -17,6 +17,9 @@ public sealed class ConfigFileSaver
         if (!string.Equals(ConfigFiles.Signature(path), expectedSignature, StringComparison.Ordinal)) throw ConfigSaveException.SourceChangedException();
         switch (Path.GetExtension(path).ToLowerInvariant())
         {
+            case ".json":
+                JsonConfigEditor.Save(path, sheetName, changes, expectedSignature);
+                break;
             case ".lua":
                 SaveLua(path, expectedSignature, changes);
                 break;

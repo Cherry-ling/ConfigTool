@@ -379,6 +379,8 @@
 
   function toggleEditMode() {
     if (state.saving) return;
+    const book = activeWorkbook();
+    if (!book || book.error) return;
     if (state.editing) {
       if (!confirmDiscard()) return;
       state.editing = false;
@@ -389,6 +391,9 @@
     renderTable();
     if (state.editing && activeWorkbook()?.sourceKind === "lua") {
       showToast("Lua 是生成配置，重新生成时可能覆盖本次修改");
+    }
+    if (state.editing && book.sourceKind === "json") {
+      showToast("保存时同步更新 JSON 和 .bytes；项目重新导表可能覆盖本次修改");
     }
   }
 
@@ -403,6 +408,10 @@
   }
 
   function updateEditUI() {
+    const book = activeWorkbook();
+    if (!book || book.error) state.editing = false;
+    el.editButton.disabled = !book || Boolean(book.error);
+    el.editButton.title = book?.sourceKind === "json" ? "编辑已有字段；保存时同步更新 JSON 和 .bytes" : "";
     el.editButton.classList.toggle("active", state.editing);
     el.editButton.textContent = state.editing ? "退出编辑" : "编辑";
     el.saveButton.disabled = !state.editing || !state.changes.size || state.saving;
@@ -617,6 +626,7 @@
     el.statusText.textContent = failures
       ? `${state.payload.fileCount} 个文件 / ${state.payload.workbooks.length} 个 Sheet，${failures} 个异常`
       : `${state.payload.fileCount} 个文件 / ${state.payload.workbooks.length} 个 Sheet 已同步`;
+    if (!state.payload.fileCount) el.statusText.textContent = "未发现支持的配置文件（.xlsx / .lua / .json）";
     el.statWorkbook.textContent = `${state.payload.fileCount.toLocaleString("zh-CN")} / ${state.payload.workbooks.length.toLocaleString("zh-CN")}`;
     updatePresetButton();
     renderGitStatus();
@@ -805,6 +815,11 @@
       book.category.toLowerCase().includes(state.tableFilter)
     );
     el.tableNavigation.replaceChildren();
+    if (!filtered.length) {
+      const message = document.createElement("p");
+      message.textContent = state.payload.workbooks.length ? "没有匹配的配置表" : "未发现支持的配置文件";
+      el.tableNavigation.appendChild(message);
+    }
 
     categoryOrder.forEach((category) => {
       const books = filtered.filter((book) => book.category === category);
@@ -851,7 +866,7 @@
 
   function normalizeRelationToken(value) {
     return String(value || "")
-      .replace(/\.(xlsx|lua)$/i, "")
+      .replace(/\.(xlsx|lua|json)$/i, "")
       .split("@")[0]
       .replace(/(?:config|cfg|table|design|column|server)$/i, "")
       .replace(/[^a-zA-Z0-9]/g, "")
@@ -859,12 +874,13 @@
   }
 
   function workbookRelationTokens(book) {
-    const fileBase = String(book.fileName || "").replace(/\.(xlsx|lua)$/i, "");
+    const fileBase = String(book.fileName || "").replace(/\.(xlsx|lua|json)$/i, "");
     return new Set([
       book.name,
       fileBase,
       book.sheetName,
-      String(book.sheetName || "").split("@")[0]
+      String(book.sheetName || "").split("@")[0],
+      ...(book.sourceKind === "json" ? [fileBase.replace(/Conf$/i, ""), String(book.sheetName || "").replace(/(?:Map|Slice)$/i, "")] : [])
     ].map(normalizeRelationToken).filter(Boolean));
   }
 
@@ -904,6 +920,7 @@
   const columnMetadataCache = new WeakMap();
 
   function resolveFieldHeaderRowIndex(book) {
+    if (book?.sourceKind === "json") return 1;
     const rows = book?.rows || [];
     for (let index = 0; index < Math.min(3, rows.length); index += 1) {
       if ((rows[index] || []).some(isIdentifierField)) return index;
@@ -930,7 +947,9 @@
       headerRowIndex,
       headers,
       types: book.rows?.[headerRowIndex + 1] || [],
-      identifierColumns: headers.map(isIdentifierField),
+      identifierColumns: headers.map((field) => isIdentifierField(field) || (book.sourceKind === "json" &&
+        (window.CONFIG_RELATION_RULES || []).some((rule) => relationRuleTargetsBook(rule, book) &&
+          String(rule.targetKey || "ID").split("|").some((key) => normalizedFieldName(key) === normalizedFieldName(field))))),
       relationRules: null,
       relationRulesPayload: null
     };
@@ -969,17 +988,18 @@
 
   function relationRuleForField(book, fieldValue) {
     const field = String(fieldValue || "").trim();
-    if (!field || isIdentifierField(field)) return null;
+    if (!field) return null;
     const normalized = normalizedFieldName(field);
-    const explicit = (window.CONFIG_RELATION_RULES || []).find((rule) =>
+    const explicit = (window.CONFIG_RELATION_RULES || []).filter((rule) =>
       ruleAppliesToBook(rule, book) &&
-      rule.fields.some((candidate) => normalizedFieldName(candidate) === normalized)
+      rule.fields.some((candidate) => normalizedFieldName(candidate) === normalized) &&
+      findRelationBooks(rule.targets).length
     );
-    if (explicit && findRelationBooks(explicit.targets).length) return explicit;
+    if (explicit.length) return book.sourceKind === "json" && explicit.length > 1 ? { ...explicit[0], alternatives: explicit } : explicit[0];
+    if (isIdentifierField(field)) return null;
 
     const inferredTarget = field
-      .replace(/(?:Config|Cfg)?(?:ID|Id)$/i, "")
-      .replace(/(?:_id)$/i, "");
+      .replace(/_?(?:Config|Conf|Cfg)?ID$/i, "");
     if (!inferredTarget || inferredTarget === field) return null;
     const targets = findRelationBooks([inferredTarget]);
     if (!targets.length) return null;
@@ -1001,13 +1021,16 @@
     if (metadata.relationRules && metadata.relationRulesPayload === state.payload) return metadata.relationRules;
     metadata.relationRules = Array.from(
       { length: book.columnCount },
-      (_, columnIndex) => hierarchyRuleForColumn(book, columnIndex) || relationRuleForColumn(book, columnIndex)
+      (_, columnIndex) => book.sourceKind === "json"
+        ? relationRuleForColumn(book, columnIndex) || hierarchyRuleForColumn(book, columnIndex)
+        : hierarchyRuleForColumn(book, columnIndex) || relationRuleForColumn(book, columnIndex)
     );
     metadata.relationRulesPayload = state.payload;
     return metadata.relationRules;
   }
 
   function commentRelationRuleForColumn(book, columnIndex) {
+    if (book.sourceKind === "json") return null;
     const headerIndex = fieldHeaderRowIndex(book);
     const comment = String(book?.rows?.[headerIndex + 2]?.[columnIndex] || "").trim();
     if (!comment || !state.payload) return null;
@@ -1096,12 +1119,15 @@
   function collectListValues(value, values) {
     if (Array.isArray(value)) {
       value.forEach((item) => collectListValues(item, values));
-    } else if (value !== null && value !== undefined && String(value).trim()) {
+    } else if (value && typeof value === "object" && Array.isArray(value.Value)) {
+      collectListValues(value.Value, values);
+    } else if (value !== null && value !== undefined && typeof value !== "object" && String(value).trim()) {
       values.push(String(value));
     }
   }
 
   function collectTupleValues(value, tupleIndex, values) {
+    if (value && !Array.isArray(value) && Array.isArray(value.Value)) value = value.Value;
     if (!Array.isArray(value)) return;
     const isTuple = value.length && value.every((item) => !Array.isArray(item) && item !== null && typeof item !== "object");
     if (isTuple) {
@@ -1116,6 +1142,20 @@
     const text = String(value || "").trim();
     if (!text) return [];
     if (mode === "scalar" || !mode) return [text];
+    if (mode === "rewardKeys" || mode === "journeyBackgroundIds") {
+      let parsed = text;
+      try { parsed = JSON.parse(text); } catch (_) { }
+      const strings = [];
+      collectListValues(parsed, strings);
+      const values = [];
+      strings.forEach((item) => item.split(/\r?\n/).forEach((line) => {
+        const match = line.match(/^\s*(\w+)\s*\+\s*(\d+)\s*([kmhi]?)\s*$/);
+        if (!match) return;
+        if (mode === "rewardKeys") values.push(match[1]);
+        else if (match[1] === "journey_background" && match[3] === "i") values.push(match[2]);
+      }));
+      return [...new Set(values)];
+    }
     if (mode === "jsonKeys") {
       if (!text.includes("{")) return [];
       const values = [];
@@ -1147,6 +1187,8 @@
   function relationDestinations(book, rowIndex, columnIndex, value, columnRule) {
     const rule = columnRule || activitySubIdRule(book, rowIndex, columnIndex);
     if (!rule) return [];
+    if (rule.alternatives) return rule.alternatives.flatMap((alternative) =>
+      relationDestinations(book, rowIndex, columnIndex, value, alternative));
     const values = extractRelationValues(value, rule.mode, rule.tupleIndex);
     const targets = rule.bookIds
       ? state.payload.workbooks.filter((target) => rule.bookIds.includes(target.id))
@@ -1580,9 +1622,13 @@
     el.reverseReferencePanel?.classList.add("hidden");
   }
 
-  function reverseQueryPlan(targetBook) {
+  function ruleUsesTargetField(rule, field) {
+    return !field || String(rule.targetKey || "ID").split("|").some((key) => normalizedFieldName(key) === normalizedFieldName(field));
+  }
+
+  function reverseQueryPlan(targetBook, targetField) {
     const targetTokens = [...workbookRelationTokens(targetBook)];
-    const matchingRules = (window.CONFIG_RELATION_RULES || []).filter((rule) => relationRuleTargetsBook(rule, targetBook));
+    const matchingRules = (window.CONFIG_RELATION_RULES || []).filter((rule) => relationRuleTargetsBook(rule, targetBook) && ruleUsesTargetField(rule, targetField));
     return {
       targetTokens,
       scalarFields: [...new Set(matchingRules
@@ -1600,7 +1646,7 @@
     };
   }
 
-  function reverseReferenceTargetsBook(reference, targetBook) {
+  function reverseReferenceTargetsBook(reference, targetBook, targetField) {
     const sourceBook = state.payload?.workbooks.find((book) => book.id === reference.bookId);
     if (!sourceBook) return false;
     const field = String(reference.field || "").trim();
@@ -1619,10 +1665,13 @@
     // resolving by its column would incorrectly discard an otherwise valid result.
     const relationRule = relationRuleForField(sourceBook, field);
     if (!relationRule) return false;
-    const targets = relationRule.bookIds
-      ? state.payload.workbooks.filter((book) => relationRule.bookIds.includes(book.id))
-      : findRelationBooks(relationRule.targets || []);
-    return targets.some((book) => book.id === targetBook.id);
+    return (relationRule.alternatives || [relationRule]).some((rule) => {
+      if (!ruleUsesTargetField(rule, targetField)) return false;
+      const targets = rule.bookIds
+        ? state.payload.workbooks.filter((book) => rule.bookIds.includes(book.id))
+        : findRelationBooks(rule.targets || []);
+      return targets.some((book) => book.id === targetBook.id);
+    });
   }
 
   function showReverseReferencePanel(references, context) {
@@ -1632,7 +1681,7 @@
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(reference);
     });
-    el.reverseReferenceTitle.textContent = `ID ${context.value} 的反向引用`;
+    el.reverseReferenceTitle.textContent = `${context.targetField || "ID"} = ${context.value} 的反向引用`;
     el.reverseReferenceSummary.textContent =
       `${references.length} 处引用 · ${groups.size} 张配置表`;
     el.reverseReferenceList.replaceChildren();
@@ -1686,10 +1735,12 @@
       return;
     }
     const requestId = ++state.reverseLookupRequestId;
-    const plan = reverseQueryPlan(book);
+    const targetField = fieldHeaders(book)[columnIndex];
+    const plan = reverseQueryPlan(book, targetField);
     state.pendingReverseLookup = {
       requestId,
       targetBookId: book.id,
+      targetField,
       sourceRow: rowIndex,
       sourceColumn: columnIndex,
       value: String(value),
@@ -1817,7 +1868,23 @@
 
   function renderTable() {
     const book = activeWorkbook();
-    if (!book) return;
+    if (!book) {
+      state.renderedTable = null;
+      el.configTable.replaceChildren();
+      el.categoryLabel.textContent = "配置目录";
+      el.sheetLabel.textContent = "—";
+      el.workbookTitle.textContent = "未发现配置表";
+      el.statRows.textContent = "0";
+      el.statColumns.textContent = "0";
+      el.statModified.textContent = "—";
+      el.tableViewport.classList.add("hidden");
+      el.errorState.classList.add("hidden");
+      el.emptyState.classList.remove("hidden");
+      el.emptyState.querySelector("h3").textContent = "未发现支持的配置文件";
+      el.emptyState.querySelector("p").textContent = "请选择包含 .xlsx、.lua 或 .json 的目录；只扫描目录第一层。";
+      updateEditUI();
+      return;
+    }
     state.renderedTable = null;
     el.categoryLabel.textContent = book.category;
     el.sheetLabel.textContent = book.sheetName || "读取异常";
@@ -1836,6 +1903,8 @@
     updateEditUI();
 
     if (!book.isLoaded && !book.error) {
+      el.emptyState.querySelector("h3").textContent = "正在读取配置表";
+      el.emptyState.querySelector("p").textContent = "正在解析本地 Excel、Lua 或 JSON 配置。";
       el.tableViewport.classList.add("hidden");
       el.errorState.classList.add("hidden");
       el.emptyState.classList.remove("hidden");
@@ -2102,7 +2171,7 @@
         return;
       }
       const references = (response.references || [])
-        .filter((reference) => reverseReferenceTargetsBook(reference, targetBook))
+        .filter((reference) => reverseReferenceTargetsBook(reference, targetBook, context.targetField))
         .filter((reference, index, all) =>
           all.findIndex((candidate) =>
             candidate.bookId === reference.bookId &&
@@ -2111,7 +2180,7 @@
           ) === index
         );
       if (!references.length) {
-        showToast(`没有配置引用 ID ${context.value}`);
+        showToast(`没有配置引用 ${context.targetField || "ID"} = ${context.value}`);
         return;
       }
       showReverseReferencePanel(references, context);

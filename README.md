@@ -1,6 +1,14 @@
 # PairPair ConfigTool
 
-个人本地配置表查看与编辑工具。工具独立于 Unity 项目，不参与项目导表，支持 `.xlsx` 与生成后的 `.lua` 配置。
+个人本地配置表查看与编辑工具。工具独立于 Unity 项目，支持 `.xlsx`、生成后的 `.lua`，以及 `.json` 配置浏览和编辑。
+
+JSON 支持 Protokit 的 `*Map`、`*Slice` 包装、顶层记录对象和数组；每个包装表单独显示，空表仍列在侧边栏，`MD5` 元数据不作为表。字段展开为列，嵌套对象和数组保留为 JSON 单元格，可使用当前表和全局搜索。只扫描所选目录第一层；没有支持的文件时会显示提示。
+
+JSON 编辑沿用“编辑 → 修改已有单元格 → 保存”、未保存修改提示和快捷键。表头、生成的索引列和原本不存在的字段锁定。字符串直接输入；数字、布尔、数组、对象需保持原类型，数组和对象使用合法 JSON。修改与 Map 键一致的 `id` / `key` 会同步调整 Map 键；重复键会阻止保存，不自动改写其他表中的引用。
+
+JSON 保存会读取当前 Unity 项目 `Assets/Scripts/Game/GameHotfix/GameProto/Runtime/gen/rawdata` 中的 Protobuf 描述，同步生成相邻 `.bytes` 并更新两份文件的 MD5。工具在写入前校验类型和 JSON / .bytes 外部变更，两份文件先暂存再替换，第二份替换失败时恢复第一份；恢复失败会保留原始备份并报告路径。缺少项目字段定义时拒绝保存。导表源 Excel / 在线表格不会回写，重新导表仍可能覆盖本地修改。Unity `.meta` 不改写。
+
+BusyBits JSON 已添加广告策略、活动排期、每日任务项与行为、里程碑计分类型、商品、物品、多语言和奖励表达式关联。奖励支持多行及字符串数组，`journey_background +1i` 同时关联物品定义和背景配置。按住 Command / Ctrl 单击关联值正向跳转；按住 Option / Alt 单击 `id`、`key` 或配置了索引的 `type` / `target_type` 查询反向引用。奖励表达式按 Goods 的 `key` 查找；积分、价格、等级范围不会按相同数值关联物品。
 
 ## 使用
 
@@ -53,9 +61,13 @@
 
 ### macOS
 
+构建需要 .NET 10 SDK 和 Xcode Command Line Tools。JSON 保存组件使用 Native AOT 打包，运行 App 无需安装 .NET 或 Python。
+
 ```bash
 ./macOS/build.sh
 ```
+
+JSON 编码集成验证（只操作临时副本）可安装 Python `protobuf` 后运行 `Tests/json_edit_integration.py <rawdata目录> <App路径>/Contents/MacOS/ConfigToolJsonHelper`；它使用独立官方解码器核对全部表、MD5、主键改名、嵌套值和冲突保护。
 
 ### Windows
 

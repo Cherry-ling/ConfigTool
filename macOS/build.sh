@@ -13,6 +13,17 @@ trap 'rm -rf "$BUILD_ROOT"' EXIT
 
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
+case "$(uname -m)" in
+  arm64) JSON_HELPER_RUNTIME=osx-arm64 ;;
+  x86_64) JSON_HELPER_RUNTIME=osx-x64 ;;
+  *) echo "不支持的 macOS 架构" >&2; exit 1 ;;
+esac
+dotnet publish "$PROJECT_ROOT/Windows/ConfigTool.JsonHelper/ConfigTool.JsonHelper.csproj" \
+  --configuration Release --runtime "$JSON_HELPER_RUNTIME" \
+  -p:PublishAot=true --output "$BUILD_ROOT/json-helper"
+cp "$BUILD_ROOT/json-helper/ConfigToolJsonHelper" "$MACOS_DIR/ConfigToolJsonHelper"
+codesign --force --sign - "$MACOS_DIR/ConfigToolJsonHelper"
+
 swiftc \
   -O \
   -framework AppKit \
@@ -20,6 +31,7 @@ swiftc \
   -framework WebKit \
   -framework UniformTypeIdentifiers \
   "$SCRIPT_DIR/Source/ConfigDataSupport.swift" \
+  "$SCRIPT_DIR/Source/JsonConfigParser.swift" \
   "$SCRIPT_DIR/Source/GitRepositorySupport.swift" \
   "$SCRIPT_DIR/Source/main.swift" \
   -o "$MACOS_DIR/ConfigTool"

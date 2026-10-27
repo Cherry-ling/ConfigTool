@@ -4,7 +4,13 @@ func configFileSignature(_ url: URL) -> String {
     guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) else {
         return ""
     }
-    return "\(values.contentModificationDate?.timeIntervalSince1970 ?? 0)|\(values.fileSize ?? 0)"
+    let signature = "\(values.contentModificationDate?.timeIntervalSince1970 ?? 0)|\(values.fileSize ?? 0)"
+    if url.pathExtension.lowercased() == "json" {
+        let binary = url.deletingPathExtension().appendingPathExtension("bytes")
+        let binarySignature = configFileSignature(binary)
+        return signature + "|bytes:" + (binarySignature.isEmpty ? "missing" : binarySignature)
+    }
+    return signature
 }
 
 private indirect enum LuaValue {
@@ -468,12 +474,46 @@ final class ConfigFileSaver {
         let url = directory.appendingPathComponent(fileName)
         guard configFileSignature(url) == expectedSignature else { throw ConfigSaveError.sourceChanged }
         switch url.pathExtension.lowercased() {
+        case "json":
+            try saveJSON(url: url, sheetName: subName, expectedSignature: expectedSignature, changes: changes)
         case "lua":
             try saveLua(url: url, changes: changes)
         case "xlsx":
             try saveXlsx(url: url, sheetName: subName, changes: changes)
         default:
             throw ConfigSaveError.unsupported("暂不支持保存 \(url.pathExtension) 文件")
+        }
+    }
+
+    private func saveJSON(url: URL, sheetName: String, expectedSignature: String, changes: [CellChange]) throws {
+        let original = try Data(contentsOf: url)
+        let binaryURL = url.deletingPathExtension().appendingPathExtension("bytes")
+        let originalBinary = FileManager.default.fileExists(atPath: binaryURL.path) ? try Data(contentsOf: binaryURL) : nil
+        guard configFileSignature(url) == expectedSignature else { throw ConfigSaveError.sourceChanged }
+        let helper = Bundle.main.executableURL!.deletingLastPathComponent().appendingPathComponent("ConfigToolJsonHelper")
+        guard FileManager.default.isExecutableFile(atPath: helper.path) else {
+            throw ConfigSaveError.unsupported("缺少 JSON 保存组件，请重新构建或更新 ConfigTool。")
+        }
+        let request: [String: Any] = [
+            "path": url.path, "sheetName": sheetName, "original": original.base64EncodedString(),
+            "originalBinary": originalBinary.map { $0.base64EncodedString() as Any } ?? NSNull(),
+            "changes": changes.map { ["row": $0.row, "column": $0.column, "value": $0.value] as [String: Any] }
+        ]
+        let input = Pipe(), errors = Pipe()
+        let process = Process()
+        process.executableURL = helper
+        process.standardInput = input
+        process.standardError = errors
+        process.standardOutput = FileHandle.nullDevice
+        try process.run()
+        try input.fileHandleForWriting.write(contentsOf: JSONSerialization.data(withJSONObject: request))
+        try input.fileHandleForWriting.close()
+        let errorData = errors.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        if process.terminationStatus == 3 { throw ConfigSaveError.sourceChanged }
+        guard process.terminationStatus == 0 else {
+            let message = String(decoding: errorData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            throw ConfigSaveError.invalidValue(message.isEmpty ? "JSON 与 .bytes 保存失败" : message)
         }
     }
 

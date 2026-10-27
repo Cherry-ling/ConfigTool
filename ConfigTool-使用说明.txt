@@ -4,11 +4,11 @@ PairPair ConfigTool 使用说明
 
 PairPair ConfigTool 是一个独立的 macOS 本地配置表查看与编辑工具。
 
-它直接读取电脑上的 Excel（.xlsx）和生成后的 Lua（.lua）配置文件：
+它直接读取电脑上的 Excel（.xlsx）、生成后的 Lua（.lua）和 JSON（.json）配置文件：
 
 1. 不启动 HTTP 服务，不参与 Unity 的导表流程。
 2. 不会上传或同步配置到服务器。
-3. 默认只读浏览；只有点击“编辑”并“保存”后，才会改写所选目录里的源文件。
+3. 默认只读浏览；点击“编辑”并“保存”后才会改写源文件。JSON 保存时同步生成相邻 .bytes 并更新 MD5，需要所选 Unity 项目中存在生成的 Protobuf 字段定义；不会回写导表源 Excel / 在线表格。
 
 它适合在不打开 Unity 的情况下查看配置、搜索字段值、跟踪 ID 关联，或谨慎地改少量配置。
 
@@ -22,7 +22,7 @@ PairPair ConfigTool 是一个独立的 macOS 本地配置表查看与编辑工�
 
 1. 双击 PairPair ConfigTool.app。
 2. 首次使用，或原目录失效时，在右上角“目录预设”中选择“选择其他目录…”。
-3. 选择一个包含 .xlsx 或 .lua 配置文件的文件夹。
+3. 选择一个包含 .xlsx、.lua 或 .json 配置文件的文件夹。
 4. 在左侧选择配置表；Excel 的每个 Sheet 会作为一个可浏览的配置页。
 5. 默认只读。需要改动时，点击“编辑”，确认修改后再点击“保存”。
 
@@ -33,7 +33,7 @@ PairPair ConfigTool 是一个独立的 macOS 本地配置表查看与编辑工�
 
 1. 配置浏览
 
-浏览当前目录第一层的 .xlsx 和 .lua 文件。Excel 的每个 Sheet 都可单独浏览；不递归扫描子目录。
+浏览当前目录第一层的 .xlsx、.lua 和 .json 文件。Excel 的每个 Sheet、JSON 的每个 Map / Slice 都可单独浏览；不递归扫描子目录。
 
 2. 表名筛选
 
@@ -79,7 +79,9 @@ Command + ]：前进到下一处关联位置。
 1. 扫描范围
 
 只读取所选目录的第一层普通文件。
-支持 .xlsx 和 .lua。
+支持 .xlsx、.lua 和 .json。JSON 的 Map / Slice 展开为表，嵌套值保留为 JSON 单元格；空表正常显示。JSON 可编辑已有字段，表头、生成索引和不存在的字段锁定；数字、布尔、对象、数组须保持原类型。修改主键同步调整原本一致的 Map 键，重复键拒绝保存。JSON 保存检查 JSON 与 .bytes 的外部变更，同步更新二者及 MD5；.meta 不修改。未发现支持的文件时会显示明确提示。
+
+BusyBits JSON 关联包含广告策略、活动排期、每日任务项与行为、里程碑计分类型、商品、物品、多语言和奖励表达式。Command / Ctrl 单击关联值可正向跳转；Option / Alt 单击 id、key 或配置了索引的 type / target_type 可查询反向引用。奖励按 GoodsConf.key 解析，不把每日任务积分等同名字段作为物品引用。
 忽略隐藏文件和 Excel 临时锁文件（文件名以 ~$ 开头）。
 Excel 会读取所有 Sheet。
 

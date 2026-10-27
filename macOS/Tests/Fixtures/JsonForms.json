@@ -1,0 +1,9 @@
+{
+  "SampleMap": {
+    "10": { "id": 10, "name": "中文配置", "enabled": true, "big": 9007199254740993, "nested": { "Value": [1, false, null] }, "empty": "", "nullable": null },
+    "20": { "id": 20, "enabled": false, "late_field": "only in second row" }
+  },
+  "SampleSlice": [ { "id": 3, "rewards": [ { "Value": [100, 2] } ] }, { "id": 4 } ],
+  "EmptySlice": [],
+  "MD5": "metadata, not a table"
+}

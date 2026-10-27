@@ -10,6 +10,7 @@ public sealed class DirectoryLoader
 
     private readonly WorkbookParser _workbookParser = new();
     private readonly LuaConfigParser _luaParser = new();
+    private readonly JsonConfigParser _jsonParser = new();
     private readonly Dictionary<string, CachedWorkbook> _cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _sync = new();
 
@@ -41,9 +42,7 @@ public sealed class DirectoryLoader
                 }
                 try
                 {
-                    var parsed = string.Equals(Path.GetExtension(path), ".lua", StringComparison.OrdinalIgnoreCase)
-                        ? _luaParser.Parse(path)
-                        : _workbookParser.Parse(path);
+                    var parsed = Parse(path);
                     _cache[path] = new CachedWorkbook(signature, parsed);
                     workbooks.AddRange(includeRows ? parsed : parsed.Select(Summary));
                 }
@@ -94,7 +93,7 @@ public sealed class DirectoryLoader
                 parsed = cached.Workbooks;
             else
             {
-                parsed = string.Equals(Path.GetExtension(path), ".lua", StringComparison.OrdinalIgnoreCase) ? _luaParser.Parse(path) : _workbookParser.Parse(path);
+                parsed = Parse(path);
                 _cache[path] = new CachedWorkbook(signature, parsed);
             }
             return parsed.FirstOrDefault(workbook => workbook.Id == id) ?? throw new InvalidDataException($"找不到配置页：{id}");
@@ -156,6 +155,7 @@ public sealed class DirectoryLoader
                         "activitySubId" => wantedTokens.Contains(NormalizeRelationToken(rowName ?? "")) && ComparableRelationValue(cellValue) == expected,
                         "list" => StructuredRelationValues(cellValue, null).Any(item => ComparableRelationValue(item) == expected),
                         "tuple" => StructuredRelationValues(cellValue, tupleIndex).Any(item => ComparableRelationValue(item) == expected),
+                        "rewardKeys" or "journeyBackgroundIds" => RewardRelationValues(cellValue, mode).Any(item => ComparableRelationValue(item) == expected),
                         _ => ComparableRelationValue(cellValue) == expected
                     };
                     if (!matches) continue;
@@ -241,6 +241,7 @@ public sealed class DirectoryLoader
 
     private static List<string> FieldHeaders(WorkbookView workbook)
     {
+        if (workbook.SourceKind == "json" && workbook.Rows.Count > 1) return workbook.Rows[1];
         foreach (var headers in workbook.Rows.Take(3))
         {
             if (headers.Any(IsIdentifierField))
@@ -271,11 +272,18 @@ public sealed class DirectoryLoader
     private static bool RuleAppliesToWorkbook(RelationRule rule, HashSet<string> sourceTokens) =>
         rule.Sources.Count == 0 || rule.Sources.Any(source => sourceTokens.Contains(NormalizeRelationToken(source)));
 
+    private List<WorkbookView> Parse(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".lua" => _luaParser.Parse(path),
+        ".json" => _jsonParser.Parse(path),
+        _ => _workbookParser.Parse(path)
+    };
+
     private static List<string> ConfigUrls(string directory)
     {
         if (!Directory.Exists(directory)) throw new DirectoryNotFoundException("配置目录不存在，请重新选择目录。");
         return Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly)
-            .Where(path => Path.GetExtension(path).Equals(".xlsx", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(path).Equals(".lua", StringComparison.OrdinalIgnoreCase))
+            .Where(path => new[] { ".xlsx", ".lua", ".json" }.Contains(Path.GetExtension(path).ToLowerInvariant()))
             .Where(path => !Path.GetFileName(path).StartsWith("~$", StringComparison.Ordinal))
             .Where(path => (File.GetAttributes(path) & FileAttributes.Hidden) == 0)
             .OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase)
@@ -284,18 +292,21 @@ public sealed class DirectoryLoader
 
     private static string NormalizeRelationToken(string value)
     {
-        var token = Regex.Replace(value, @"\.(xlsx|lua)$", "", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant).Split('@')[0];
+        var token = Regex.Replace(value, @"\.(xlsx|lua|json)$", "", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant).Split('@')[0];
         token = Regex.Replace(token, @"(config|cfg|table|design|column|server)$", "", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         return Regex.Replace(token, @"[^a-zA-Z0-9]", "", RegexOptions.CultureInvariant).ToLowerInvariant();
     }
 
-    private static HashSet<string> WorkbookRelationTokens(WorkbookView workbook) => new(new[]
+    private static HashSet<string> WorkbookRelationTokens(WorkbookView workbook)
     {
-        workbook.Name,
-        Path.GetFileNameWithoutExtension(workbook.FileName),
-        workbook.SheetName,
-        workbook.SheetName.Split('@')[0]
-    }.Select(NormalizeRelationToken).Where(token => !string.IsNullOrEmpty(token)), StringComparer.Ordinal);
+        var names = new List<string> { workbook.Name, Path.GetFileNameWithoutExtension(workbook.FileName), workbook.SheetName, workbook.SheetName.Split('@')[0] };
+        if (workbook.SourceKind == "json")
+        {
+            names.Add(Regex.Replace(workbook.Name, @"Conf$", "", RegexOptions.IgnoreCase));
+            names.Add(Regex.Replace(workbook.SheetName, @"(Map|Slice)$", "", RegexOptions.IgnoreCase));
+        }
+        return new(names.Select(NormalizeRelationToken).Where(token => !string.IsNullOrEmpty(token)), StringComparer.Ordinal);
+    }
 
     private static string WorkbookPrimaryRelationToken(WorkbookView workbook)
     {
@@ -306,7 +317,7 @@ public sealed class DirectoryLoader
 
     private static string? InferredRelationTarget(string field)
     {
-        var target = Regex.Replace(field, @"(?:Config|Cfg)?(?:ID|Id)$", "", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var target = Regex.Replace(field, @"_?(?:Config|Conf|Cfg)?ID$", "", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         target = Regex.Replace(target, @"_id$", "", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         return target == field || string.IsNullOrEmpty(target) ? null : target;
     }
@@ -355,6 +366,7 @@ public sealed class DirectoryLoader
 
         void Visit(JsonElement element)
         {
+            if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty("Value", out var wrapped)) { Visit(wrapped); return; }
             if (element.ValueKind != JsonValueKind.Array) return;
             var children = element.EnumerateArray().ToList();
             var tuple = children.Count > 0 && children.All(child => child.ValueKind is not JsonValueKind.Array and not JsonValueKind.Object);
@@ -365,7 +377,7 @@ public sealed class DirectoryLoader
             }
             foreach (var child in children)
             {
-                if (child.ValueKind == JsonValueKind.Array) Visit(child);
+                if (child.ValueKind is JsonValueKind.Array or JsonValueKind.Object) Visit(child);
                 else if (tupleIndex is null) values.Add(PrimitiveText(child));
             }
         }
@@ -373,5 +385,27 @@ public sealed class DirectoryLoader
         static string PrimitiveText(JsonElement element) => element.ValueKind == JsonValueKind.String
             ? element.GetString() ?? ""
             : element.GetRawText();
+    }
+
+    private static List<string> RewardRelationValues(string value, string mode)
+    {
+        var strings = new List<string>();
+        try { using var document = JsonDocument.Parse(value); Visit(document.RootElement); }
+        catch (JsonException) { strings.Add(value); }
+        var values = new List<string>();
+        foreach (var text in strings)
+        foreach (var line in text.Split('\n'))
+        {
+            var match = Regex.Match(line, @"^\s*(\w+)\s*\+\s*(\d+)\s*([kmhi]?)\s*$", RegexOptions.CultureInvariant);
+            if (!match.Success) continue;
+            if (mode == "rewardKeys") values.Add(match.Groups[1].Value);
+            else if (match.Groups[1].Value == "journey_background" && match.Groups[3].Value == "i") values.Add(match.Groups[2].Value);
+        }
+        return values.Distinct(StringComparer.Ordinal).ToList();
+        void Visit(JsonElement element)
+        {
+            if (element.ValueKind == JsonValueKind.Array) foreach (var child in element.EnumerateArray()) Visit(child);
+            else if (element.ValueKind == JsonValueKind.String) strings.Add(element.GetString() ?? "");
+        }
     }
 }

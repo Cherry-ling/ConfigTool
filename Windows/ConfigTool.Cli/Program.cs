@@ -21,6 +21,13 @@ try
 {
     switch (args[0])
     {
+        case "--reverse-rules-audit" when args.Length >= 5:
+        {
+            var rules = JsonSerializer.Deserialize<List<RelationRule>>(File.ReadAllText(args[4]), JsonDefaults.Options) ?? [];
+            var references = loader.FindReverseReferences(args[1], args[2], args[3].Split(',').ToList(), [], [], rules);
+            Console.WriteLine(JsonSerializer.Serialize(new ReverseReferenceResponse { RequestId = 0, Value = args[2], References = references }, JsonDefaults.Options));
+            return 0;
+        }
         case "--audit":
         {
             var payload = loader.Load(args[1], includeRows: true);
@@ -134,6 +141,33 @@ static int RunSelfTest()
         var global = loader.FindGlobalMatches(directory, "updated");
         Assert(global.TotalCount == 1 && global.Matches.Single().BookId == excel.Id, "全局搜索结果不正确");
 
+        var jsonPath = Path.Combine(directory, "SampleConf.json");
+        File.WriteAllText(jsonPath, """
+            {"SampleMap":{"10":{"id":10,"name":"中文配置","enabled":true,"big":9007199254740993,"nested":{"Value":[1,false,null]},"empty":"","nullable":null},"20":{"id":20,"enabled":false,"late_field":"second"}},"SampleSlice":[{"id":3,"rewards":[{"Value":[100,2]}]},{"id":4}],"EmptySlice":[],"MD5":"metadata"}
+            """);
+        var jsonBooks = loader.Load(directory, includeRows: true).Workbooks.Where(book => book.SourceKind == "json").ToList();
+        Assert(jsonBooks.Count == 3 && jsonBooks.All(book => book.SheetCount == 3 && book.EditableFromRow == 3), "JSON 子表与编辑标记不正确");
+        var json = jsonBooks.Single(book => book.SheetName == "SampleMap");
+        string JsonCell(int row, string field) => json.Rows[row][json.Rows[1].IndexOf(field)];
+        Assert(json.RowCount == 5 && JsonCell(3, "name") == "中文配置", "JSON Map 解析不正确");
+        Assert(JsonCell(3, "enabled") == "true" && JsonCell(4, "enabled") == "false" && JsonCell(3, "big") == "9007199254740993", "JSON 布尔值或大整数丢失");
+        Assert(JsonCell(3, "nullable") == "null" && JsonCell(3, "empty") == "" && JsonCell(3, "late_field") == "" && JsonCell(4, "late_field") == "second", "JSON 空值或新增列不正确");
+        using (var nested = JsonDocument.Parse(JsonCell(3, "nested")))
+            Assert(nested.RootElement.GetProperty("Value")[1].ValueKind == JsonValueKind.False, "JSON 嵌套值丢失");
+        Assert(jsonBooks.Single(book => book.SheetName == "EmptySlice").RowCount == 3 && jsonBooks.Single(book => book.SheetName == "SampleSlice").RowCount == 5, "JSON Slice 或空表不正确");
+        Assert(!loader.Load(directory).Workbooks.Single(book => book.Id == json.Id).IsLoaded && loader.LoadWorkbook(directory, json.Id).Rows[3][0] == "10", "JSON 延迟加载不正确");
+        Assert(loader.FindGlobalMatches(directory, "中文配置").TotalCount == 1, "JSON 全局搜索失败");
+        var jsonOriginal = File.ReadAllText(jsonPath);
+        try
+        {
+            saver.Save(directory, json.Id, json.SourceSignature, [new CellChange { Row = 3, Column = json.Rows[1].IndexOf("name"), Value = "changed" }]);
+            throw new InvalidOperationException("缺少项目字段定义时 JSON 保存未被拒绝");
+        }
+        catch (ConfigSaveException error) when (error.Message.Contains("Protobuf 字段定义")) { }
+        Assert(File.ReadAllText(jsonPath) == jsonOriginal, "JSON 源文件被修改");
+        File.WriteAllText(Path.Combine(directory, "Broken.json"), "{");
+        Assert(loader.Load(directory).Workbooks.Count(book => book.Error is not null) == 1, "JSON 解析失败未独立显示");
+
         var gitDirectory = Path.Combine(directory, "git-self-test");
         Directory.CreateDirectory(gitDirectory);
         RunGitForSelfTest(gitDirectory, "init", "-q");
@@ -186,7 +220,7 @@ static int RunSelfTest()
         var pull = git.Pull(consumer);
         Assert(pull.Success && File.ReadAllText(Path.Combine(consumer, "shared.txt")) == "second\n", "Git 快进拉取不正确");
 
-        Console.WriteLine("self_test=ok lua_read_save=ok xlsx_read_save=ok conflict_guard=ok global_search=ok git_clean=ok git_pull=ok");
+        Console.WriteLine("self_test=ok json_read_search=ok json_schema_guard=ok lua_read_save=ok xlsx_read_save=ok conflict_guard=ok global_search=ok git_clean=ok git_pull=ok");
         return 0;
     }
     catch (Exception error)

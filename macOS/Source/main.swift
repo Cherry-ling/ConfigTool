@@ -448,13 +448,13 @@ private final class StylesDelegate: NSObject, XMLParserDelegate {
 private final class DirectoryLoader {
     private let workbookParser = WorkbookParser()
     private let luaParser = LuaConfigParser()
+    private let jsonParser = JsonConfigParser()
     private var cache: [String: (signature: String, workbooks: [WorkbookView])] = [:]
 
     func signature(for directory: URL) -> String {
         guard let urls = try? excelURLs(in: directory) else { return "" }
         return urls.compactMap { url in
-            guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) else { return nil }
-            return "\(url.lastPathComponent)|\(values.contentModificationDate?.timeIntervalSince1970 ?? 0)|\(values.fileSize ?? 0)"
+            return "\(url.lastPathComponent)|\(configFileSignature(url))"
         }.joined(separator: "\n")
     }
 
@@ -463,7 +463,7 @@ private final class DirectoryLoader {
         var workbooks: [WorkbookView] = []
         for url in urls {
             let values = try url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
-            let fileSignature = "\(values.contentModificationDate?.timeIntervalSince1970 ?? 0)|\(values.fileSize ?? 0)"
+            let fileSignature = configFileSignature(url)
             if let cached = cache[url.path], cached.signature == fileSignature {
                 workbooks.append(contentsOf: includeRows ? cached.workbooks : cached.workbooks.map(summary))
                 continue
@@ -472,6 +472,8 @@ private final class DirectoryLoader {
                 let parsedSheets: [WorkbookView]
                 if url.pathExtension.lowercased() == "lua" {
                     parsedSheets = try luaParser.parse(url: url)
+                } else if url.pathExtension.lowercased() == "json" {
+                    parsedSheets = try jsonParser.parse(url: url)
                 } else {
                     parsedSheets = try workbookParser.parse(url: url)
                 }
@@ -518,6 +520,9 @@ private final class DirectoryLoader {
             parsed = cached.workbooks
         } else if url.pathExtension.lowercased() == "lua" {
             parsed = try luaParser.parse(url: url)
+            cache[url.path] = (signature, parsed)
+        } else if url.pathExtension.lowercased() == "json" {
+            parsed = try jsonParser.parse(url: url)
             cache[url.path] = (signature, parsed)
         } else {
             parsed = try workbookParser.parse(url: url)
@@ -604,6 +609,10 @@ private final class DirectoryLoader {
                         }
                     case "tuple":
                         matches = Self.structuredRelationValues(in: cellValue, tupleIndex: tupleIndex).contains {
+                            Self.comparableRelationValue($0) == expected
+                        }
+                    case "rewardKeys", "journeyBackgroundIds":
+                        matches = Self.rewardRelationValues(in: cellValue, mode: mode).contains {
                             Self.comparableRelationValue($0) == expected
                         }
                     default:
@@ -699,6 +708,7 @@ private final class DirectoryLoader {
     }
 
     private static func fieldHeaders(for workbook: WorkbookView) -> [String] {
+        if workbook.sourceKind == "json", workbook.rows.count > 1 { return workbook.rows[1] }
         for headers in workbook.rows.prefix(3) {
             if headers.contains(where: isIdentifierField) {
                 return headers
@@ -738,7 +748,7 @@ private final class DirectoryLoader {
         let values: Set<URLResourceKey> = [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey]
         return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: Array(values), options: [.skipsHiddenFiles])
             .filter { url in
-                ["xlsx", "lua"].contains(url.pathExtension.lowercased()) &&
+                ["xlsx", "lua", "json"].contains(url.pathExtension.lowercased()) &&
                 !url.lastPathComponent.hasPrefix("~$")
             }
             .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
@@ -750,7 +760,7 @@ private final class DirectoryLoader {
 
     private static func normalizeRelationToken(_ value: String) -> String {
         var token = value
-            .replacingOccurrences(of: #"\.(xlsx|lua)$"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"\.(xlsx|lua|json)$"#, with: "", options: [.regularExpression, .caseInsensitive])
             .components(separatedBy: "@").first ?? ""
         token = token.replacingOccurrences(
             of: #"(config|cfg|table|design|column|server)$"#,
@@ -764,12 +774,17 @@ private final class DirectoryLoader {
 
     private static func workbookRelationTokens(_ workbook: WorkbookView) -> Set<String> {
         let fileBase = (workbook.fileName as NSString).deletingPathExtension
-        return Set([
+        var names = [
             workbook.name,
             fileBase,
             workbook.sheetName,
             workbook.sheetName.components(separatedBy: "@").first ?? ""
-        ].map(normalizeRelationToken).filter { !$0.isEmpty })
+        ]
+        if workbook.sourceKind == "json" {
+            names.append(fileBase.replacingOccurrences(of: #"Conf$"#, with: "", options: [.regularExpression, .caseInsensitive]))
+            names.append(workbook.sheetName.replacingOccurrences(of: #"(Map|Slice)$"#, with: "", options: [.regularExpression, .caseInsensitive]))
+        }
+        return Set(names.map(normalizeRelationToken).filter { !$0.isEmpty })
     }
 
     private static func workbookPrimaryRelationToken(_ workbook: WorkbookView) -> String {
@@ -785,7 +800,7 @@ private final class DirectoryLoader {
 
     private static func inferredRelationTarget(_ field: String) -> String? {
         var target = field.replacingOccurrences(
-            of: #"(?:Config|Cfg)?(?:ID|Id)$"#,
+            of: #"_?(?:Config|Conf|Cfg)?ID$"#,
             with: "",
             options: [.regularExpression, .caseInsensitive]
         )
@@ -846,6 +861,10 @@ private final class DirectoryLoader {
     }
 
     private static func visit(_ object: Any, tupleIndex: Int?, values: inout [String]) {
+        if let wrapped = (object as? [String: Any])?["Value"] {
+            visit(wrapped, tupleIndex: tupleIndex, values: &values)
+            return
+        }
         guard let array = object as? [Any] else { return }
         let isTuple = !array.isEmpty && array.allSatisfy { !($0 is [Any]) && !($0 is [String: Any]) }
         if isTuple, let tupleIndex, tupleIndex < array.count {
@@ -853,7 +872,7 @@ private final class DirectoryLoader {
             return
         }
         for item in array {
-            if item is [Any] { visit(item, tupleIndex: tupleIndex, values: &values) }
+            if item is [Any] || item is [String: Any] { visit(item, tupleIndex: tupleIndex, values: &values) }
             else if tupleIndex == nil { values.append(primitiveString(item)) }
         }
     }
@@ -861,6 +880,27 @@ private final class DirectoryLoader {
     private static func primitiveString(_ value: Any) -> String {
         if let value = value as? String { return value }
         return String(describing: value)
+    }
+
+    private static func rewardRelationValues(in value: String, mode: String) -> [String] {
+        var strings: [String] = []
+        func collect(_ object: Any) {
+            if let array = object as? [Any] { array.forEach(collect) }
+            else if let text = object as? String { strings.append(text) }
+        }
+        if let object = try? JSONSerialization.jsonObject(with: Data(value.utf8), options: [.fragmentsAllowed]) { collect(object) }
+        else { strings.append(value) }
+        let regex = try! NSRegularExpression(pattern: #"^\s*(\w+)\s*\+\s*(\d+)\s*([kmhi]?)\s*$"#)
+        var results: [String] = []
+        for text in strings {
+            for line in text.components(separatedBy: "\n") {
+                guard let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) else { continue }
+                func group(_ index: Int) -> String { Range(match.range(at: index), in: line).map { String(line[$0]) } ?? "" }
+                if mode == "rewardKeys" { results.append(group(1)) }
+                else if group(1) == "journey_background", group(3) == "i" { results.append(group(2)) }
+            }
+        }
+        return Array(Set(results))
     }
 }
 
@@ -1076,7 +1116,7 @@ private final class AppController: NSObject, NSApplicationDelegate, WKScriptMess
     private func chooseDirectory() {
         let panel = NSOpenPanel()
         panel.title = "选择配置表目录"
-        panel.message = "请选择包含 .xlsx 或 .lua 配置的目录"
+        panel.message = "请选择包含 .xlsx、.lua 或 .json 配置的目录"
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
@@ -1455,15 +1495,22 @@ private func runReverseAudit(
     value: String,
     targetToken: String,
     scalarFields: [String],
-    jsonFields: [String]
+    jsonFields: [String],
+    rulesPath: String? = nil
 ) -> Int32 {
     do {
+        let rules: [RelationRule]
+        if let rulesPath {
+            let objects = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: rulesPath))) as? [[String: Any]] ?? []
+            rules = objects.map(RelationRule.init(dictionary:))
+        } else { rules = [] }
         let references = try DirectoryLoader().findReverseReferences(
             directory: URL(fileURLWithPath: path, isDirectory: true),
             value: value,
             targetTokens: [targetToken],
             scalarFields: scalarFields,
-            jsonFields: jsonFields
+            jsonFields: jsonFields,
+            relationRules: rules
         )
         let data = try JSONEncoder().encode(references)
         FileHandle.standardOutput.write(data)
@@ -1613,6 +1660,11 @@ private func runSystemGit(in directory: URL, arguments: [String]) throws {
 if let auditIndex = CommandLine.arguments.firstIndex(of: "--audit") {
     let path = CommandLine.arguments.indices.contains(auditIndex + 1) ? CommandLine.arguments[auditIndex + 1] : defaultConfigPath
     exit(runAudit(path: path))
+}
+
+if let auditIndex = CommandLine.arguments.firstIndex(of: "--reverse-rules-audit"), CommandLine.arguments.count > auditIndex + 4 {
+    let arguments = CommandLine.arguments
+    exit(runReverseAudit(path: arguments[auditIndex + 1], value: arguments[auditIndex + 2], targetToken: arguments[auditIndex + 3], scalarFields: [], jsonFields: [], rulesPath: arguments[auditIndex + 4]))
 }
 
 if let auditIndex = CommandLine.arguments.firstIndex(of: "--reverse-audit") {

@@ -113,7 +113,13 @@ public static class ConfigFiles
     public static string Signature(string path)
     {
         var info = new FileInfo(path);
-        return $"{info.LastWriteTimeUtc.Ticks}|{info.Length}";
+        var signature = $"{info.LastWriteTimeUtc.Ticks}|{info.Length}";
+        if (Path.GetExtension(path).Equals(".json", StringComparison.OrdinalIgnoreCase))
+        {
+            var binary = new FileInfo(Path.ChangeExtension(path, ".bytes"));
+            signature += binary.Exists ? $"|bytes:{binary.LastWriteTimeUtc.Ticks}|{binary.Length}" : "|bytes:missing";
+        }
+        return signature;
     }
 
     public static string IsoTimestamp(DateTime value) => value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);

@@ -6,15 +6,15 @@
 	<dict>
 		<key>Resources/Web/app.js</key>
 		<data>
-		aPaF3ocMZkr+u0o7ygC8UnW46r8=
+		V9xKcoPvczB3lRPlKoQHYI6huh0=
 		</data>
 		<key>Resources/Web/index.html</key>
 		<data>
-		3v9H9+Z60SYo89KCcmfxyGWgVtI=
+		+v7hvXi9p/NZT0/fnpKm5uCOpBE=
 		</data>
 		<key>Resources/Web/relationships.js</key>
 		<data>
-		6JLmBwDeO0giECMlWVArIuoRyEA=
+		TW+r8N0k2xdEntrz2gftBFGeYhI=
 		</data>
 		<key>Resources/Web/styles.css</key>
 		<data>
@@ -23,25 +23,34 @@
 	</dict>
 	<key>files2</key>
 	<dict>
+		<key>MacOS/ConfigToolJsonHelper</key>
+		<dict>
+			<key>cdhash</key>
+			<data>
+			H5N9ccHXoktATz68ybUQYdaPMZ8=
+			</data>
+			<key>requirement</key>
+			<string>cdhash H"1f937d71c1d7a24b404f3ebcc9b51061d68f319f"</string>
+		</dict>
 		<key>Resources/Web/app.js</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			joNR62CtXOU2cSpaScjOT+ji2Ge/78E1ET0eSqbUUf4=
+			c7gURSiUOVvkKht6ZMBdpqeRYNfVSqVXHKwI6hdtGHQ=
 			</data>
 		</dict>
 		<key>Resources/Web/index.html</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			my9GbGOZAAy2SNVx4J/dOdF/MOw26rwzVvIozF8fluY=
+			WNDXJc7wthgOV1LZcVYVIZ31jVo7AkIyU9IOyUsybY8=
 			</data>
 		</dict>
 		<key>Resources/Web/relationships.js</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			to32bFQXkybh8yh8dMYTv8e8472AsFeoj6lBmYPj3hY=
+			KRDaTmPQv2f/ZR/aPbR2YCkwDxhxHQGBDv5d9RhIZdU=
 			</data>
 		</dict>
 		<key>Resources/Web/styles.css</key>
